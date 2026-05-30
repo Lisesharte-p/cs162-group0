@@ -551,7 +551,7 @@ static void schedule(void) {
 
 /* Returns a tid to use for a new thread. */
 static tid_t allocate_tid(void) {
-  static tid_t next_tid = 1;
+  static tid_t next_tid = 1; //init(1)
   tid_t tid;
 
   lock_acquire(&tid_lock);
@@ -564,3 +564,13 @@ static tid_t allocate_tid(void) {
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof(struct thread, stack);
+
+struct thread* thread_get_by_tid(tid_t tid) {
+  struct list_elem* e;
+  for (e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e)) {
+    struct thread* t = list_entry(e, struct thread, allelem);
+    if (t->tid == tid)
+      return t;
+  }
+  return NULL;
+}

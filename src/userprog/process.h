@@ -27,11 +27,28 @@ struct process {
   uint32_t* pagedir;          /* Page directory. */
   char process_name[16];      /* Name of the main thread */
   struct thread* main_thread; /* Pointer to main thread */
+  struct list fd_list;
+  int next_fd;
+  struct semaphore sema_exit;
+  tid_t parent_pid;
+  int exit_code;
+  pid_t main_pid;
 };
-
+struct file_descriptors {
+  struct list_elem elem;
+  struct file* file_descriptor;
+  int fd;
+};
+struct sema_file_bundle {
+  char* file_name;
+  struct semaphore* sema;
+  bool success;
+  tid_t parent_tid;
+};
 void userprog_init(void);
-
+struct process* get_process(pid_t pid);
 pid_t process_execute(const char* file_name);
+void start_process(void* file_name_);
 int process_wait(pid_t);
 void process_exit(void);
 void process_activate(void);
