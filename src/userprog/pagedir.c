@@ -84,7 +84,7 @@ static uint32_t* lookup_page(uint32_t* pd, const void* vaddr, bool create) {
    otherwise it is read-only.
    Returns true if successful, false if memory allocation
    failed. */
-bool pagedir_set_page(uint32_t* pd, void* upage, void* kpage, bool writable) {
+bool pagedir_set_page(uint32_t* pd, void* upage, void* kpage, bool writable, bool is_cow) {
   uint32_t* pte;
 
   ASSERT(pg_ofs(upage) == 0);
@@ -98,6 +98,7 @@ bool pagedir_set_page(uint32_t* pd, void* upage, void* kpage, bool writable) {
   if (pte != NULL) {
     ASSERT((*pte & PTE_P) == 0);
     *pte = pte_create_user(kpage, writable);
+    // *pte = pte_set_cow(kpage, is_cow);
     return true;
   } else
     return false;

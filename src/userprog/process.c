@@ -20,6 +20,7 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include <ctype.h>
+
 static struct process* pid_pcb[MAX_THREADS];
 static struct semaphore temporary;
 thread_func start_process NO_RETURN;
@@ -55,15 +56,25 @@ pid_t process_execute(const char* file_name) {
   char* fn_copy;
   tid_t tid;
   struct semaphore* load_sema = malloc(sizeof(struct semaphore));
+  if (!load_sema) {
+    return TID_ERROR;
+  }
   sema_init(load_sema, 0);
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page(0);
-  if (fn_copy == NULL)
+  if (fn_copy == NULL) {
+    free(load_sema);
     return TID_ERROR;
+  }
   strlcpy(fn_copy, file_name, PGSIZE);
 
-  struct sema_file_bundle* bundle = malloc(sizeof(struct sema_file_bundle));
+  struct process_start_bundle* bundle = malloc(sizeof(struct process_start_bundle));
+  if (!bundle) {
+    palloc_free_page(fn_copy);
+    free(load_sema);
+    return TID_ERROR;
+  }
   bundle->file_name = fn_copy;
   bundle->sema = load_sema;
   bundle->parent_tid = thread_current()->tid;
@@ -76,13 +87,16 @@ pid_t process_execute(const char* file_name) {
   }
 
   sema_down(bundle->sema);
+  palloc_free_page(fn_copy);
+  free(bundle);
+  free(load_sema);
   return tid;
 }
 
 /* A thread function that loads a user process and starts it
    running. */
 void start_process(void* file_name_) {
-  struct sema_file_bundle* bundle = (struct sema_file_bundle*)file_name_;
+  struct process_start_bundle* bundle = (struct process_start_bundle*)file_name_;
   char* file_name = bundle->file_name;
   struct thread* t = thread_current();
   struct intr_frame if_;
@@ -142,7 +156,7 @@ void start_process(void* file_name_) {
       if_.cs = SEL_UCSEG;
       if_.eflags = FLAG_IF | FLAG_MBS;
 
-      success = load(exec_name, &if_.eip, &if_.esp);
+      success = load(exec_name, &if_.eip, &if_.esp); //pagedir is set in load.
 
       free(exec_name);
     }
@@ -168,7 +182,14 @@ void start_process(void* file_name_) {
         token_len[argc] = strlen(token);
         argc++;
       }
-
+      //align here. cmd_line + argc +argv array+argv pointer+dummy return address
+      int total_bytes = sizeof(char) * (strlen(file_name) + 1) + sizeof(int) +
+                        sizeof(char*) * argc + sizeof(void*) + sizeof(char*);
+      int num_align = 0;
+      while (num_align * 16 < total_bytes) { //stack is aligned to 16 bytes.
+        num_align++;
+      }
+      if_.esp -= (num_align * 16) - total_bytes;
       /* Second pass: push strings in reverse order so argv[0] ends up at
          the lowest address (string_start), matching argv ordering. */
       for (int i = argc - 1; i >= 0; i--) {
@@ -226,7 +247,7 @@ void start_process(void* file_name_) {
   if (bundle->sema) { //if someone is waiting for the exec, wake them up.
     sema_up(bundle->sema);
   }
-  // sema_up(bundle->sema);
+
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -235,6 +256,32 @@ void start_process(void* file_name_) {
      and jump to it. */
   asm volatile("movl %0, %%esp; jmp intr_exit" : : "g"(&if_) : "memory");
   NOT_REACHED();
+}
+
+int fork_start(void* bundle) {
+  struct thread* t = thread_current();
+  struct fork_bundle* f_b = (struct fork_bundle*)bundle;
+
+  t->pcb = f_b->child_pcb;
+  t->pcb->main_thread = t;
+  t->pcb->main_pid = thread_current()->tid;
+  t->pcb->exit_code = 0;
+  pid_pcb[t->tid] = t->pcb;
+  t->pcb->pagedir = f_b->pd;
+
+  process_activate();
+
+  struct intr_frame* child_ = malloc(sizeof(struct intr_frame));
+  if (!child_) {
+    f_b->success = -1;
+    sema_up(&f_b->fork_sema);
+    process_exit();
+  }
+  memcpy(child_, f_b->child_state, sizeof(struct intr_frame));
+  f_b->success = 1;
+  sema_up(&f_b->fork_sema);
+
+  asm volatile("movl %0, %%esp; jmp intr_exit" : : "g"(child_) : "memory");
 }
 
 /* Waits for process with PID child_pid to die and returns its exit status.
@@ -254,12 +301,36 @@ int process_wait(pid_t child_pid UNUSED) {
   sema_down(&wait_thread->sema_exit);
   int exit_code = wait_thread->exit_code;
   free(wait_thread);
+  pid_pcb[child_pid] = NULL;
+  tid_recycle(child_pid);
   return exit_code;
+}
+void file_close_list(struct list* file_list) {
+  if (!file_list) {
+    return;
+  }
+  struct list_elem* head = list_begin(file_list);
+  struct list_elem* tail = list_end(file_list);
+  if (!head || !tail) {
+    return;
+  }
+  while (head != tail) {
+    struct file_descriptors* fd = list_entry(head, struct file_descriptors, elem);
+    head = list_next(head);
+    list_remove(&fd->elem);
+    if (fd->file_descriptor) {
+      file_close(fd->file_descriptor);
+    }
+    free(fd);
+  }
 }
 
 /* Free the current process's resources. */
 void process_exit(void) {
   struct thread* cur = thread_current();
+  printf(
+      "%s: exit(%d)\n", thread_current()->pcb->process_name,
+      thread_current()->pcb->exit_code); // put printf here to avoid race since printf is not sync
   uint32_t* pd;
 
   /* If this thread does not have a PCB, don't worry */
@@ -290,8 +361,9 @@ void process_exit(void) {
      If this happens, then an unfortuantely timed timer interrupt
      can try to activate the pagedir, but it is now freed memory */
 
-  printf("%s: exit(%d)\n", thread_current()->pcb->process_name, thread_current()->pcb->exit_code);
   struct process* pcb_to_free = cur->pcb;
+  struct list* file_list = &pcb_to_free->fd_list;
+  file_close_list(file_list);
   cur->pcb = NULL;
   // free(pcb_to_free);
 
@@ -614,7 +686,7 @@ static bool install_page(void* upage, void* kpage, bool writable) {
   /* Verify that there's not already a page at that virtual
      address, then map our page there. */
   return (pagedir_get_page(t->pcb->pagedir, upage) == NULL &&
-          pagedir_set_page(t->pcb->pagedir, upage, kpage, writable));
+          pagedir_set_page(t->pcb->pagedir, upage, kpage, writable, false));
 }
 
 /* Returns true if t is the main thread of the process p */

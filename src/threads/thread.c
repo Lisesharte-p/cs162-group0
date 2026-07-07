@@ -11,6 +11,7 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "lib/kernel/bitmap.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -33,6 +34,10 @@ static struct thread* idle_thread;
 
 /* Initial thread, the thread running init.c:main(). */
 static struct thread* initial_thread;
+
+/* Bitmap used for tid allocation and recycling. */
+static unsigned long tid_bitmap_buf[8];
+static struct bitmap* tid_bitmap;
 
 /* Lock used by allocate_tid(). */
 static struct lock tid_lock;
@@ -107,6 +112,8 @@ void thread_init(void) {
   ASSERT(intr_get_level() == INTR_OFF);
 
   lock_init(&tid_lock);
+  tid_bitmap = bitmap_create_in_buf(MAX_THREADS, tid_bitmap_buf, sizeof tid_bitmap_buf);
+  bitmap_set(tid_bitmap, 0, true);
   list_init(&fifo_ready_list);
   list_init(&all_list);
 
@@ -524,10 +531,12 @@ void thread_switch_tail(struct thread* prev) {
      palloc().) */
   if (prev != NULL && prev->status == THREAD_DYING && prev != initial_thread) {
     ASSERT(prev != cur);
+    //bitmap_reset(tid_bitmap, prev->tid);
     palloc_free_page(prev);
   }
 }
 
+void tid_recycle(tid_t tid) { bitmap_reset(tid_bitmap, tid); }
 /* Schedules a new thread.  At entry, interrupts must be off and
    the running process's state must have been changed from
    running to some other state.  This function finds another
@@ -551,11 +560,12 @@ static void schedule(void) {
 
 /* Returns a tid to use for a new thread. */
 static tid_t allocate_tid(void) {
-  static tid_t next_tid = 1; //init(1)
   tid_t tid;
 
   lock_acquire(&tid_lock);
-  tid = next_tid++;
+  tid = bitmap_scan_and_flip(tid_bitmap, 1, 1, false);
+  if (tid >= MAX_THREADS)
+    tid = TID_ERROR;
   lock_release(&tid_lock);
 
   return tid;

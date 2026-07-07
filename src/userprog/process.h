@@ -7,7 +7,6 @@
 // At most 8MB can be allocated to the stack
 // These defines will be used in Project 2: Multithreading
 #define MAX_STACK_PAGES (1 << 11)
-#define MAX_THREADS 127
 
 /* PIDs and TIDs are the same type. PID should be
    the TID of the main thread of the process */
@@ -39,11 +38,20 @@ struct file_descriptors {
   struct file* file_descriptor;
   int fd;
 };
-struct sema_file_bundle {
+struct process_start_bundle {
   char* file_name;
   struct semaphore* sema;
   bool success;
   tid_t parent_tid;
+  bool is_fork;
+};
+struct fork_bundle {
+  struct semaphore fork_sema;
+  struct process* child_pcb;
+  struct intr_frame* child_state;
+  uint32_t* pd;
+  struct list* fd_list;
+  bool success;
 };
 void userprog_init(void);
 struct process* get_process(pid_t pid);
@@ -55,7 +63,7 @@ void process_activate(void);
 
 bool is_main_thread(struct thread*, struct process*);
 pid_t get_pid(struct process*);
-
+int fork_start(void* bundle);
 tid_t pthread_execute(stub_fun, pthread_fun, void*);
 tid_t pthread_join(tid_t);
 void pthread_exit(void);

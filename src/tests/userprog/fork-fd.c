@@ -7,7 +7,6 @@ char buf[24];
 
 void test_main(void) {
   quiet = true;
-
   CHECK(create("new.txt", 36), "create failed");
   int fd;
 
@@ -20,7 +19,9 @@ void test_main(void) {
   if (pid == 0) {
     int new_fd;
     CHECK((new_fd = open("new.txt")) != fd, "file descriptors should be distinct");
+
     close(new_fd);
+
     close(fd);
 
     CHECK(read(new_fd, buf, 10) == -1, "You should not be able to read from a closed FD");
@@ -32,8 +33,10 @@ void test_main(void) {
   CHECK((new_new_fd = open("new.txt")) != fd, "file descriptors should be distinct");
   close(fd);
   close(new_new_fd);
+
   CHECK(read(new_new_fd, buf, 10) == -1, "You should not be able to read from a closed FD");
   CHECK(read(fd, buf, 10) == -1, "You should not be able to read from a closed FD");
+
   wait(pid);
 
   quiet = false;

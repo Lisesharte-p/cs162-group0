@@ -19,6 +19,7 @@ enum thread_status {
    You can redefine this to whatever type you like. */
 typedef int tid_t;
 #define TID_ERROR ((tid_t)-1) /* Error value for tid_t. */
+#define MAX_THREADS 127
 
 /* Thread priorities. */
 #define PRI_MIN 0      /* Lowest priority. */
@@ -81,7 +82,7 @@ typedef int tid_t;
    only because they are mutually exclusive: only a thread in the
    ready state is on the run queue, whereas only a thread in the
    blocked state is on a semaphore wait list. */
-struct thread {
+struct thread { //for multithreading we need per thread registers
   /* Owned by thread.c. */
   tid_t tid;                 /* Thread identifier. */
   enum thread_status status; /* Thread state. */
@@ -123,7 +124,7 @@ void thread_start(void);
 
 void thread_tick(void);
 void thread_print_stats(void);
-
+void tid_recycle(tid_t tid);
 typedef void thread_func(void* aux);
 tid_t thread_create(const char* name, int priority, thread_func*, void*);
 

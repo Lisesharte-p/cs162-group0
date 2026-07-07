@@ -78,6 +78,7 @@ static void kill(struct intr_frame* f) {
       printf("%s: dying due to interrupt %#04x (%s).\n", thread_name(), f->vec_no,
              intr_name(f->vec_no));
       intr_dump_frame(f);
+      thread_current()->pcb->exit_code = -1;
       process_exit();
       NOT_REACHED();
 
@@ -135,6 +136,7 @@ static void page_fault(struct intr_frame* f) {
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
   if (!user && is_user_vaddr(fault_addr)) { //user passed invalid ptr
+
     thread_current()->pcb->exit_code = -1;
     process_exit();
     NOT_REACHED();
@@ -145,5 +147,6 @@ static void page_fault(struct intr_frame* f) {
   printf("Page fault at %p: %s error %s page in %s context.\n", fault_addr,
          not_present ? "not present" : "rights violation", write ? "writing" : "reading",
          user ? "user" : "kernel");
-  kill(f);
+
+  kill(f); //add COW page_fault user write a COW page.
 }

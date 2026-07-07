@@ -8,6 +8,7 @@ struct file {
   struct inode* inode; /* File's inode. */
   off_t pos;           /* Current position. */
   bool deny_write;     /* Has file_deny_write() been called? */
+  int ref_cnt;
 };
 
 /* Opens a file for the given INODE, of which it takes ownership,
@@ -19,6 +20,7 @@ struct file* file_open(struct inode* inode) {
     file->inode = inode;
     file->pos = 0;
     file->deny_write = false;
+    file->ref_cnt = 1;
     return file;
   } else {
     inode_close(inode);
@@ -30,7 +32,12 @@ struct file* file_open(struct inode* inode) {
 /* Opens and returns a new file for the same inode as FILE.
    Returns a null pointer if unsuccessful. */
 struct file* file_reopen(struct file* file) {
-  return file_open(inode_reopen(file->inode));
+  if (file != NULL) {
+    file->ref_cnt++;
+  }
+  inode_reopen(file->inode);
+  return file;
+  //return file_open(inode_reopen(file->inode));
 }
 
 /* Closes FILE. */
@@ -38,7 +45,9 @@ void file_close(struct file* file) {
   if (file != NULL) {
     file_allow_write(file);
     inode_close(file->inode);
-    free(file);
+    if (--file->ref_cnt == 0) {
+      free(file);
+    }
   }
 }
 
@@ -75,6 +84,9 @@ off_t file_read_at(struct file* file, void* buffer, off_t size, off_t file_ofs) 
    not yet implemented.)
    Advances FILE's position by the number of bytes read. */
 off_t file_write(struct file* file, const void* buffer, off_t size) {
+  if (file->deny_write) {
+    return 0;
+  }
   off_t bytes_written = inode_write_at(file->inode, buffer, size, file->pos);
   file->pos += bytes_written;
   return bytes_written;
