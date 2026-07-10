@@ -232,7 +232,15 @@ void thread_block(void) {
   thread_current()->status = THREAD_BLOCKED;
   schedule();
 }
+/*just copy the thread_block function*/
+void thread_sleep(void) {
+  ASSERT(!intr_context());
+  ASSERT(intr_get_level() == INTR_OFF);
 
+  thread_current()->status = THREAD_SLEEPING;
+  schedule();
+  intr_enable();
+}
 /* Places a thread on the ready structure appropriate for the
    current active scheduling policy.
    
@@ -246,7 +254,17 @@ static void thread_enqueue(struct thread* t) {
   else
     PANIC("Unimplemented scheduling policy value: %d", active_sched_policy);
 }
+void thread_wake(struct thread* t) {
 
+
+  ASSERT(is_thread(t));
+
+
+  ASSERT(t->status == THREAD_SLEEPING);
+  thread_enqueue(t);
+  t->status = THREAD_READY;
+
+}
 /* Transitions a blocked thread T to the ready-to-run state.
    This is an error if T is not blocked.  (Use thread_yield() to
    make the running thread ready.)
@@ -537,6 +555,7 @@ void thread_switch_tail(struct thread* prev) {
 }
 
 void tid_recycle(tid_t tid) { bitmap_reset(tid_bitmap, tid); }
+
 /* Schedules a new thread.  At entry, interrupts must be off and
    the running process's state must have been changed from
    running to some other state.  This function finds another

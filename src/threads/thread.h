@@ -12,7 +12,8 @@ enum thread_status {
   THREAD_RUNNING, /* Running thread. */
   THREAD_READY,   /* Not running but ready to run. */
   THREAD_BLOCKED, /* Waiting for an event to trigger. */
-  THREAD_DYING    /* About to be destroyed. */
+  THREAD_DYING,    /* About to be destroyed. */
+  THREAD_SLEEPING   /*Sleeping now.*/
 };
 
 /* Thread identifier type.
@@ -129,6 +130,8 @@ typedef void thread_func(void* aux);
 tid_t thread_create(const char* name, int priority, thread_func*, void*);
 
 void thread_block(void);
+void thread_sleep(void);
+void thread_wake(struct thread* t);
 void thread_unblock(struct thread*);
 
 struct thread* thread_current(void);

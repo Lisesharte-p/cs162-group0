@@ -14,7 +14,9 @@
 
 .globl switch_threads
 .func switch_threads
-switch_threads:
+switch_threads: 
+	# eip is saved to the stack when calling this procedure, and we loaded the esp for the next running thread, so the eip is loaded automaticaly with ret instruction.
+
 	# Save caller's register state.
 	#
 	# Note that the SVR4 ABI allows us to destroy %eax, %ecx, %edx,
