@@ -11,8 +11,8 @@ typedef int pid_t;
 #define PID_ERROR ((pid_t)-1)
 
 /* Synchronization Types */
-typedef char lock_t;
-typedef char sema_t;
+typedef int lock_t;
+typedef int sema_t;
 
 /* Map region identifier. */
 typedef int mapid_t;

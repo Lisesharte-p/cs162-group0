@@ -12,6 +12,8 @@ static void syscall_handler(struct intr_frame*);
 struct list_elem* list_find_file(struct list* list_, int fd);
 void remove_file(struct list* list_, int fd);
 bool add_file_descriptor(struct list* list_, struct file* file_, int fd);
+static struct sema_descriptor* find_sema(int sid, struct process* pcb);
+static struct lock_descriptor* find_lock(int lid, struct process* pcb);
 void syscall_init(void) { intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall"); }
 
 static void syscall_handler(struct intr_frame* f UNUSED) {
@@ -233,6 +235,121 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     f->eax = now_pos;
     return;
   }
+  if (args[0] == SYS_LOCK_INIT) {
+    validate(args, 1);
+    if (!args[1]) {
+      f->eax = 0;
+      return;
+    }
+    struct lock_descriptor* ld = malloc(sizeof(struct lock_descriptor));
+    if (!ld) {
+      f->eax = 0;
+      return;
+    }
+    lock_init(&ld->lock);
+    ld->lid = thread_current()->pcb->next_lid++;
+    list_push_back(&thread_current()->pcb->lock_list, &ld->elem);
+    *(int*)args[1] = ld->lid;
+    f->eax = 1;
+    return;
+  }
+  if (args[0] ==
+      SYS_LOCK_ACQUIRE) { //get lock, if the lock is held by another thread, donate priority.
+    validate(args, 1);
+    int lid = *(int*)args[1];
+    struct lock_descriptor* ld = find_lock(lid, thread_current()->pcb);
+    if (!ld) {
+      f->eax = 0;
+      return;
+    }
+    lock_acquire(&ld->lock); //might be blocked.
+    f->eax = 1;
+    return;
+  }
+  if (args[0] == SYS_LOCK_RELEASE) {
+    validate(args, 1);
+    int lid = *(int*)args[1];
+    struct lock_descriptor* ld = find_lock(lid, thread_current()->pcb);
+    if (!ld) {
+      f->eax = 0;
+      return;
+    }
+    lock_release(&ld->lock);
+    f->eax = 1;
+    return;
+  }
+  if (args[0] == SYS_CHDIR) {
+  }
+  if (args[0] == SYS_GET_TID) {
+    f->eax = thread_current()->tid;
+  }
+  if (args[0] == SYS_ISDIR) {
+  }
+  if (args[0] == SYS_MKDIR) {
+  }
+  if (args[0] == SYS_MMAP) {
+  }
+  if (args[0] == SYS_MUNMAP) {
+  }
+  if (args[0] == SYS_SEMA_DOWN) {
+    validate(args, 1);
+    int sid = *(int*)args[1];
+    struct sema_descriptor* sd = find_sema(sid, thread_current()->pcb);
+    if (!sd) {
+      f->eax = 0;
+      return;
+    }
+    sema_down(&sd->sema);
+    f->eax = 1;
+    return;
+  }
+  if (args[0] == SYS_SEMA_INIT) {
+    validate(args, 1); //we only check the sema address.
+    if ((int)args[2] < 0 || args[1] == NULL) {
+      f->eax = 0;
+      return;
+    }
+    struct sema_descriptor* sd = malloc(sizeof(struct sema_descriptor));
+    if (!sd) {
+      f->eax = 0;
+      return;
+    }
+    sema_init(&sd->sema, args[2]);
+    sd->sid = thread_current()->pcb->next_sid++;
+    list_push_back(&thread_current()->pcb->sema_list, &sd->elem);
+    *(int*)args[1] = sd->sid;
+    f->eax = 1;
+    return;
+  }
+  if (args[0] == SYS_SEMA_UP) {
+    validate(args, 1);
+    int sid = *(int*)args[1];
+    struct sema_descriptor* sd = find_sema(sid, thread_current()->pcb);
+    if (!sd) {
+      f->eax = 0;
+      return;
+    }
+    sema_up(&sd->sema);
+    f->eax = 1;
+    return;
+  }
+  if (args[0] == SYS_PT_CREATE) {
+    validate(args, 3);
+    f->eax = pthread_execute(args[1], args[2], args[3]);
+    return;
+  }
+  if (args[0] == SYS_PT_EXIT) {
+    pthread_exit();
+  }
+  if (args[0] == SYS_PT_JOIN) {
+    validate(args, 1);
+    f->eax = pthread_join(args[1]);
+    return;
+  }
+  if (args[0] == SYS_READDIR) {
+  }
+  if (args[0] == SYS_REMOVE) {
+  }
 }
 
 pid_t exec_(const char* cmd_line) {
@@ -292,6 +409,30 @@ int close_file(struct list* list_, int fd) {
   file_close(node->file_descriptor);
   free(node);
   return 1;
+}
+
+static struct sema_descriptor* find_sema(int sid, struct process* pcb) {
+  struct list_elem* head = list_begin(&pcb->sema_list);
+  struct list_elem* tail = list_end(&pcb->sema_list);
+  while (head != tail) {
+    struct sema_descriptor* sd = list_entry(head, struct sema_descriptor, elem);
+    if (sd->sid == sid)
+      return sd;
+    head = list_next(head);
+  }
+  return NULL;
+}
+
+static struct lock_descriptor* find_lock(int lid, struct process* pcb) {
+  struct list_elem* head = list_begin(&pcb->lock_list);
+  struct list_elem* tail = list_end(&pcb->lock_list);
+  while (head != tail) {
+    struct lock_descriptor* ld = list_entry(head, struct lock_descriptor, elem);
+    if (ld->lid == lid)
+      return ld;
+    head = list_next(head);
+  }
+  return NULL;
 }
 
 struct list_elem* list_find_file(struct list* list_, int fd) {
@@ -402,7 +543,7 @@ int fork_(struct intr_frame* f) { //reopen files, copy pagedir and set to COW
       }
       uint32_t* page_base = pte_get_page(pt[m]);
       uint32_t* new_page = palloc_get_page(PAL_USER);
-      if (!new_page) {
+      if (!new_page) { //should free all pages allocated.
         file_close_list(&child_pcb->fd_list);
         pagedir_destroy(pd_child);
         free(bundle);
@@ -415,6 +556,9 @@ int fork_(struct intr_frame* f) { //reopen files, copy pagedir and set to COW
       pagedir_set_page(pd_child, upage, new_page, true, false);
     }
   }
+
+  list_init(&child_pcb->lock_list);
+  list_init(&child_pcb->sema_list);
 
   sema_init(&bundle->fork_sema, 0);
 

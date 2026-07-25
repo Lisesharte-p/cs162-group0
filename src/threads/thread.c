@@ -197,7 +197,6 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
   /* Initialize thread. */
   init_thread(t, name, priority);
   tid = t->tid = allocate_tid();
-
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame(t, sizeof *kf);
   kf->eip = NULL;
@@ -215,7 +214,9 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
 
   /* Add to run queue. */
   thread_unblock(t);
-
+  if (thread_current()->priority < priority) {
+    thread_yield();
+  }
   return tid;
 }
 
@@ -237,7 +238,7 @@ void thread_sleep(void) {
   ASSERT(!intr_context());
   ASSERT(intr_get_level() == INTR_OFF);
 
-  thread_current()->status = THREAD_SLEEPING;
+  running_thread()->status = THREAD_SLEEPING;
   schedule();
   intr_enable();
 }
@@ -249,21 +250,18 @@ static void thread_enqueue(struct thread* t) {
   ASSERT(intr_get_level() == INTR_OFF);
   ASSERT(is_thread(t));
 
-  if (active_sched_policy == SCHED_FIFO)
+  if (active_sched_policy == SCHED_FIFO || active_sched_policy == SCHED_PRIO)
     list_push_back(&fifo_ready_list, &t->elem);
   else
     PANIC("Unimplemented scheduling policy value: %d", active_sched_policy);
 }
 void thread_wake(struct thread* t) {
 
-
   ASSERT(is_thread(t));
-
 
   ASSERT(t->status == THREAD_SLEEPING);
   thread_enqueue(t);
   t->status = THREAD_READY;
-
 }
 /* Transitions a blocked thread T to the ready-to-run state.
    This is an error if T is not blocked.  (Use thread_yield() to
@@ -317,6 +315,26 @@ void thread_exit(void) {
      and schedule another process.  That process will destroy us
      when it calls thread_switch_tail(). */
   intr_disable();
+
+  // struct thread* t = thread_current();
+  // enum intr_level old_level = intr_disable();
+  // struct list_elem* h = list_begin(&t->pcb->thread_list);
+  // struct list_elem* tl_tail = list_end(&t->pcb->thread_list);
+  // bool sema_uped = 0;
+  // while (h != tl_tail) {
+  //   struct thread_list_elem* elem = list_entry(h, struct thread_list_elem, elem);
+  //   if (elem->td == t) {
+  //     elem->exited = true;
+  //     sema_up(&elem->exit_sema);
+  //     sema_uped = 1;
+  //     break;
+  //   }
+  //   h = list_next(h);
+  // }
+  // if (!sema_uped) {
+  //   NOT_REACHED();
+  // }
+
   list_remove(&thread_current()->allelem);
   thread_current()->status = THREAD_DYING;
   schedule();
@@ -353,9 +371,24 @@ void thread_foreach(thread_action_func* func, void* aux) {
 }
 
 /* Sets the current thread's priority to NEW_PRIORITY. */
-void thread_set_priority(int new_priority) { thread_current()->priority = new_priority; }
+void thread_set_priority(int new_priority) {
+  struct thread* cur = thread_current();
+  cur->init_priority = new_priority;
+  recalculate_priority(cur);
 
-/* Returns the current thread's priority. */
+  /* Yield if a ready thread has higher effective priority. */
+  struct list_elem* e = list_begin(&fifo_ready_list);
+  while (e != list_end(&fifo_ready_list)) {
+    struct thread* t = list_entry(e, struct thread, elem);
+    if (t->priority > cur->priority) {
+      thread_yield();
+      break;
+    }
+    e = list_next(e);
+  }
+}
+
+/* Returns the current thread's effective priority. */
 int thread_get_priority(void) { return thread_current()->priority; }
 
 /* Sets the current thread's nice value to NICE. */
@@ -453,8 +486,10 @@ static void init_thread(struct thread* t, const char* name, int priority) {
   strlcpy(t->name, name, sizeof t->name);
   t->stack = (uint8_t*)t + PGSIZE;
   t->priority = priority;
+  t->init_priority = priority;
   t->pcb = NULL;
   t->magic = THREAD_MAGIC;
+  list_init(&t->locks_held);
 
   old_level = intr_disable();
   list_push_back(&all_list, &t->allelem);
@@ -482,7 +517,26 @@ static struct thread* thread_schedule_fifo(void) {
 
 /* Strict priority scheduler */
 static struct thread* thread_schedule_prio(void) {
-  PANIC("Unimplemented scheduler policy: \"-sched=prio\"");
+  if (list_empty(&fifo_ready_list))
+    return idle_thread;
+
+  struct list_elem* head = list_begin(&fifo_ready_list);
+  struct list_elem* tail = list_end(&fifo_ready_list);
+
+  struct thread* best = list_entry(head, struct thread, elem);
+  int best_pri = best->priority;
+
+  while (head != tail) {
+    struct thread* t = list_entry(head, struct thread, elem);
+    if (t->priority > best_pri) {
+      best = t;
+      best_pri = t->priority;
+    }
+    head = list_next(head);
+  }
+
+  list_remove(&best->elem);
+  return best;
 }
 
 /* Fair priority scheduler */
@@ -593,7 +647,7 @@ static tid_t allocate_tid(void) {
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof(struct thread, stack);
-
+/*can return NULL*/
 struct thread* thread_get_by_tid(tid_t tid) {
   struct list_elem* e;
   for (e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e)) {

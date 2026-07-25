@@ -21,22 +21,45 @@ typedef void (*stub_fun)(pthread_fun, void*);
    PCB from the TCB. All TCBs in a process will have a pointer
    to the PCB, and the PCB will have a pointer to the main thread
    of the process, which is `special`. */
+struct user_stack_page {
+  struct list_elem elem;
+  void* upage; /* User virtual address of the stack page */
+  tid_t tid;   /* Owning thread's TID */
+};
+
 struct process {
   /* Owned by process.c. */
   uint32_t* pagedir;          /* Page directory. */
   char process_name[16];      /* Name of the main thread */
   struct thread* main_thread; /* Pointer to main thread */
   struct list fd_list;
+  struct list thread_list;
+  struct list user_stack_pages;
+  struct list sema_list;
+  struct list lock_list;
   int next_fd;
+  int next_sid;
+  int next_lid;
   struct semaphore sema_exit;
   tid_t parent_pid;
   int exit_code;
   pid_t main_pid;
 };
+
 struct file_descriptors {
   struct list_elem elem;
   struct file* file_descriptor;
   int fd;
+};
+struct sema_descriptor {
+  struct list_elem elem;
+  int sid;
+  struct semaphore sema;
+};
+struct lock_descriptor {
+  struct list_elem elem;
+  int lid;
+  struct lock lock;
 };
 struct process_start_bundle {
   char* file_name;
@@ -53,6 +76,13 @@ struct fork_bundle {
   struct list* fd_list;
   bool success;
 };
+struct pthread_bundle {
+  struct process* process_;
+  stub_fun sf;
+  pthread_fun pf;
+  void* args;
+  struct semaphore pt_start_sema;
+};
 void userprog_init(void);
 struct process* get_process(pid_t pid);
 pid_t process_execute(const char* file_name);
@@ -68,5 +98,7 @@ tid_t pthread_execute(stub_fun, pthread_fun, void*);
 tid_t pthread_join(tid_t);
 void pthread_exit(void);
 void pthread_exit_main(void);
-
+struct thread* get_thread_in_process(tid_t tid, struct process* p);
+void sema_close_list(struct list*);
+void lock_close_list(struct list*);
 #endif /* userprog/process.h */

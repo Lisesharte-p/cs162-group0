@@ -82,16 +82,17 @@ int64_t timer_elapsed(int64_t then) { return timer_ticks() - then; }
 
 /* Sleeps for approximately TICKS timer ticks.  Interrupts must
    be turned on. */
-void timer_sleep(int64_t ticks) {//put the thread to the sleep list, at each timer interrupt, check and schedule
+void timer_sleep(
+    int64_t ticks) { //put the thread to the sleep list, at each timer interrupt, check and schedule
   intr_disable();
   int64_t start = timer_ticks();
   struct sleeping_thread* s_t = malloc(sizeof(struct sleeping_thread));
   s_t->t = thread_current();
   s_t->start_tick = start;
   s_t->tick = ticks;
+
   list_push_back(&sleeping_threads_list, &s_t->elem);
-  // ASSERT(intr_get_level() == INTR_ON);
-  // while (timer_elapsed(start) < ticks)
+
   thread_sleep();
 }
 
@@ -144,12 +145,12 @@ static void timer_interrupt(struct intr_frame* args UNUSED) {
   check_sleep_timeout();
   thread_tick();
 }
-void check_sleep_timeout() { 
+void check_sleep_timeout() {
   struct list_elem* head = list_begin(&sleeping_threads_list);
   struct list_elem* tail = list_end(&sleeping_threads_list);
-  while(head!=tail){
+  while (head != tail) {
     struct sleeping_thread* s_t = list_entry(head, struct sleeping_thread, elem);
-    if(ticks-s_t->start_tick>=s_t->tick){
+    if (ticks - s_t->start_tick >= s_t->tick) {
       thread_wake(s_t->t);
       head = list_remove(head);
       continue;

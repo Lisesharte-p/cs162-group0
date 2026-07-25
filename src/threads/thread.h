@@ -12,8 +12,8 @@ enum thread_status {
   THREAD_RUNNING, /* Running thread. */
   THREAD_READY,   /* Not running but ready to run. */
   THREAD_BLOCKED, /* Waiting for an event to trigger. */
-  THREAD_DYING,    /* About to be destroyed. */
-  THREAD_SLEEPING   /*Sleeping now.*/
+  THREAD_DYING,   /* About to be destroyed. */
+  THREAD_SLEEPING /*Sleeping now.*/
 };
 
 /* Thread identifier type.
@@ -83,11 +83,11 @@ typedef int tid_t;
    only because they are mutually exclusive: only a thread in the
    ready state is on the run queue, whereas only a thread in the
    blocked state is on a semaphore wait list. */
-struct thread { //for multithreading we need per thread registers
+struct thread {
   /* Owned by thread.c. */
   tid_t tid;                 /* Thread identifier. */
   enum thread_status status; /* Thread state. */
-  char name[16];             /* Name (for debugging purposes). */
+  char name[64];             /* Name (for debugging purposes). */
   uint8_t* stack;            /* Saved stack pointer. */
   int priority;              /* Priority. */
   struct list_elem allelem;  /* List element for all threads list. */
@@ -102,8 +102,23 @@ struct thread { //for multithreading we need per thread registers
 
   /* Owned by thread.c. */
   unsigned magic; /* Detects stack overflow. */
+  struct list locks_held;
+  int init_priority; /* Base priority (set by user/creation). */
+  struct lock*
+      waiting_lock; /* Lock this thread is waiting to acquire (for chain donation), or NULL. */
 };
-
+struct lock_held {
+  struct lock* lk;
+  struct list_elem elem;
+};
+struct thread_list_elem {
+  struct list_elem elem;
+  struct thread* td;
+  tid_t tid; /* Thread identifier, stored separately so
+                               pthread_join can match by tid after td is freed. */
+  bool exited;
+  struct semaphore exit_sema;
+};
 /* Types of scheduler that the user can request the kernel
  * use to schedule threads at runtime. */
 enum sched_policy {
@@ -153,4 +168,5 @@ void thread_set_nice(int);
 int thread_get_recent_cpu(void);
 int thread_get_load_avg(void);
 struct thread* thread_get_by_tid(tid_t);
+
 #endif /* threads/thread.h */
