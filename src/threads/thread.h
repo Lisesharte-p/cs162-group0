@@ -97,7 +97,8 @@ struct thread {
 
 #ifdef USERPROG
   /* Owned by process.c. */
-  struct process* pcb; /* Process control block if this thread is a userprog */
+  struct process* pcb;        /* Process control block if this thread is a userprog */
+  struct semaphore exit_sema; /* Thread exit semaphore for pthread_join */
 #endif
 
   /* Owned by thread.c. */
@@ -117,7 +118,6 @@ struct thread_list_elem {
   tid_t tid; /* Thread identifier, stored separately so
                                pthread_join can match by tid after td is freed. */
   bool exited;
-  struct semaphore exit_sema;
 };
 /* Types of scheduler that the user can request the kernel
  * use to schedule threads at runtime. */

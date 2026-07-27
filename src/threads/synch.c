@@ -257,7 +257,9 @@ void lock_release(struct lock* lock) {
   bool has_waiters = !list_empty(&lock->semaphore.waiters);
 
   list_remove(&lock->held_elem);
-  recalculate_priority(cur);
+  if (has_waiters) {
+    recalculate_priority(cur);
+  }
 
   lock->holder = NULL;
   sema_up(&lock->semaphore);

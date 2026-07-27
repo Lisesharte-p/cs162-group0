@@ -165,7 +165,11 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
       return;
     }
     struct file_descriptors* file_ptr = list_entry(file_node, struct file_descriptors, elem);
-
+    if (!file_ptr || !args[2]) {
+      f->eax = -1;
+      return;
+    }
+    // printf("%u\n", args[2]);
     int off = file_read(file_ptr->file_descriptor, (const void*)args[2], args[3]);
 
     f->eax = off;
@@ -262,6 +266,11 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
       f->eax = 0;
       return;
     }
+    if (lock_held_by_current_thread(&ld->lock)) {
+      thread_current()->pcb->exit_code = 1;
+      process_exit();
+      NOT_REACHED();
+    }
     lock_acquire(&ld->lock); //might be blocked.
     f->eax = 1;
     return;
@@ -271,6 +280,10 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     int lid = *(int*)args[1];
     struct lock_descriptor* ld = find_lock(lid, thread_current()->pcb);
     if (!ld) {
+      f->eax = 0;
+      return;
+    }
+    if (!lock_held_by_current_thread(&ld->lock)) {
       f->eax = 0;
       return;
     }

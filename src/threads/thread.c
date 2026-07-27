@@ -316,25 +316,6 @@ void thread_exit(void) {
      when it calls thread_switch_tail(). */
   intr_disable();
 
-  // struct thread* t = thread_current();
-  // enum intr_level old_level = intr_disable();
-  // struct list_elem* h = list_begin(&t->pcb->thread_list);
-  // struct list_elem* tl_tail = list_end(&t->pcb->thread_list);
-  // bool sema_uped = 0;
-  // while (h != tl_tail) {
-  //   struct thread_list_elem* elem = list_entry(h, struct thread_list_elem, elem);
-  //   if (elem->td == t) {
-  //     elem->exited = true;
-  //     sema_up(&elem->exit_sema);
-  //     sema_uped = 1;
-  //     break;
-  //   }
-  //   h = list_next(h);
-  // }
-  // if (!sema_uped) {
-  //   NOT_REACHED();
-  // }
-
   list_remove(&thread_current()->allelem);
   thread_current()->status = THREAD_DYING;
   schedule();
