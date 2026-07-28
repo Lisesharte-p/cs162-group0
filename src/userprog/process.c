@@ -278,7 +278,7 @@ faliure:
   NOT_REACHED();
 }
 
-int fork_start(void* bundle) { //fork a new process
+int fork_start(void* bundle) { //fork a new process, should also modify the thread list?
   struct thread* t = thread_current();
   struct fork_bundle* f_b = (struct fork_bundle*)bundle;
 
@@ -288,7 +288,12 @@ int fork_start(void* bundle) { //fork a new process
   t->pcb->exit_code = 0;
   pid_pcb[t->tid] = t->pcb;
   t->pcb->pagedir = f_b->pd;
-
+  list_init(&t->pcb->thread_list);
+  struct thread_list_elem* elem = malloc(sizeof(struct thread_list_elem));
+  elem->td = t;
+  elem->exited = false;
+  elem->tid = t->tid;
+  list_push_back(&t->pcb->thread_list, &elem->elem);
   process_activate();
 
   struct intr_frame* child_ = malloc(sizeof(struct intr_frame));
@@ -379,8 +384,6 @@ void process_exit(void) {
   printf(
       "%s: exit(%d)\n", thread_current()->pcb->process_name,
       thread_current()->pcb->exit_code); // put printf here to avoid race since printf is not sync
-  uint32_t* pd;
-
   /* If this thread does not have a PCB, don't worry */
   if (cur->pcb == NULL) {
     free_all_threads();
@@ -390,7 +393,7 @@ void process_exit(void) {
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
-  pd = cur->pcb->pagedir;
+  uint32_t* pd = cur->pcb->pagedir;
 
   if (pd != NULL) {
     /* Correct ordering here is crucial.  We must set
@@ -431,30 +434,66 @@ static void free_all_threads(void) {
     return;
 
   struct list* thread_list = &cur->pcb->thread_list;
-  struct list_elem* head = list_begin(thread_list);
-  struct list_elem* tail = list_end(thread_list);
 
-  while (head != tail) {
-    struct thread_list_elem* tle = list_entry(head, struct thread_list_elem, elem);
-    head = list_next(head);
+  /* First pass: release locks held by non-exited threads.
+     Otherwise, after their stack pages are freed, lock->holder
+     becomes a dangling pointer.  Later calls like file_close_list
+     -> inode_close -> lock_acquire would follow the pointer into
+     freed memory filled with 0xcc, interpreting 0xcccccccc as a
+     non-NULL ->waiting_lock and then faulting when it tries to
+     dereference 0xcccccccc->holder. */
+  {
+    struct list_elem* head = list_begin(thread_list);
+    struct list_elem* tail = list_end(thread_list);
+    while (head != tail) {
+      struct thread_list_elem* tle = list_entry(head, struct thread_list_elem, elem);
+      head = list_next(head);
 
-    if (tle->td == cur)
-      continue;
+      if (tle->td == cur || tle->exited || !is_thread(tle->td))
+        continue;
 
-    if (!tle->exited) {
-      /* Thread still alive — forcibly remove and free its page. */
-      enum intr_level old_level = intr_disable();
-      list_remove(&tle->td->allelem);
-      list_remove(&tle->td->elem); //might not in a list
-      tle->td->status = THREAD_DYING;
-      intr_set_level(old_level);
-      palloc_free_page(pg_round_down(tle->td->stack));
-      continue;
+      struct thread* victim = tle->td;
+      while (!list_empty(&victim->locks_held)) {
+        struct list_elem* e = list_pop_front(&victim->locks_held);
+        struct lock* l = list_entry(e, struct lock, held_elem);
+        /* Reset the lock state: clear holder so lock_acquire won't
+           follow a dangling pointer, reset the semaphore to 1 so
+           the next acquire won't block, and re-init the waiters list
+           so sema_up in lock_release won't iterate stale entries. */
+        l->holder->priority = PRI_MAX;
+        l->holder = NULL;
+        sema_up(&l->semaphore);
+        // list_init(&l->semaphore.waiters);
+      }
     }
-    /* If already exited: the scheduler freed the page in thread_switch_tail.
-       Just clean up the thread_list_elem. */
-    list_remove(&tle->elem);
-    free(tle);
+  }
+
+  /* Second pass: free the threads. */
+  {
+    struct list_elem* head = list_begin(thread_list);
+    struct list_elem* tail = list_end(thread_list);
+    while (head != tail) {
+      struct thread_list_elem* tle = list_entry(head, struct thread_list_elem, elem);
+      head = list_next(head);
+      /*check if the thread is already freed*/
+      if (tle->td == cur || !is_thread(tle->td))
+        continue;
+
+      if (!tle->exited) {
+        /* Thread still alive — forcibly remove and free its page. */
+        enum intr_level old_level = intr_disable();
+        list_remove(&tle->td->allelem);
+        list_remove(&tle->td->elem); //might not in a list
+        tle->td->status = THREAD_DYING;
+        intr_set_level(old_level);
+        palloc_free_page(pg_round_down(tle->td->stack));
+        continue;
+      }
+      /* If already exited: the scheduler freed the page in thread_switch_tail.
+         Just clean up the thread_list_elem. */
+      list_remove(&tle->elem);
+      free(tle);
+    }
   }
 }
 /* Sets up the CPU for running user code in the current

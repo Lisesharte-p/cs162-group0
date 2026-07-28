@@ -94,7 +94,7 @@ struct thread {
 
   /* Shared between thread.c and synch.c. */
   struct list_elem elem; /* List element. */
-
+  struct list_elem elem_in_process;
 #ifdef USERPROG
   /* Owned by process.c. */
   struct process* pcb;        /* Process control block if this thread is a userprog */

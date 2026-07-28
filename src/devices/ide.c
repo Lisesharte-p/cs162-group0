@@ -398,7 +398,7 @@ static void wait_until_idle(const struct ata_disk* d) {
     timer_usleep(10);
   }
 
-  printf("%s: idle timeout\n", d->name);
+  // printf("%s: idle timeout\n", d->name);
 }
 
 /* Wait up to 30 seconds for disk D to clear BSY,
