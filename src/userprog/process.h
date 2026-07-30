@@ -44,6 +44,9 @@ struct process {
   tid_t parent_pid;
   int exit_code;
   pid_t main_pid;
+  int next_thread_num;
+  unsigned long thread_id_bitmap_buf[32];
+  struct bitmap* thread_id_bitmap;
 };
 
 struct file_descriptors {
@@ -82,6 +85,7 @@ struct pthread_bundle {
   pthread_fun pf;
   void* args;
   struct semaphore pt_start_sema;
+  int id;
 };
 void userprog_init(void);
 struct process* get_process(pid_t pid);
@@ -90,7 +94,7 @@ void start_process(void* file_name_);
 int process_wait(pid_t);
 void process_exit(void);
 void process_activate(void);
-
+void id_recycle(tid_t tid, struct process* p);
 bool is_main_thread(struct thread*, struct process*);
 pid_t get_pid(struct process*);
 int fork_start(void* bundle);

@@ -36,7 +36,7 @@ static struct thread* idle_thread;
 static struct thread* initial_thread;
 
 /* Bitmap used for tid allocation and recycling. */
-static unsigned long tid_bitmap_buf[8];
+static unsigned long tid_bitmap_buf[32];
 static struct bitmap* tid_bitmap;
 
 /* Lock used by allocate_tid(). */
@@ -584,7 +584,20 @@ void thread_switch_tail(struct thread* prev) {
      palloc().) */
   if (prev != NULL && prev->status == THREAD_DYING && prev != initial_thread) {
     ASSERT(prev != cur);
-    //bitmap_reset(tid_bitmap, prev->tid);
+#ifdef USERPROG
+    /* Notify the process layer: mark the thread's thread_list_elem as
+       exited and signal its exit_sema so that pthread_join / pthread_exit_main
+       can wake up even when the thread bypassed pthread_exit().
+
+       This runs after the context switch, so prev->pcb is still valid
+       (unless prev is the main thread — process_exit() clears pcb before
+       calling thread_exit()). */
+    // if (prev->exit_notifier != NULL && prev->pcb != NULL) {
+    //   prev->exit_notifier->exited = true;
+    //   sema_up(&prev->exit_notifier->exit_sema);
+    // }
+#endif
+    bitmap_reset(tid_bitmap, prev->tid);
     palloc_free_page(prev);
   }
 }

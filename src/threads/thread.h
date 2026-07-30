@@ -20,7 +20,7 @@ enum thread_status {
    You can redefine this to whatever type you like. */
 typedef int tid_t;
 #define TID_ERROR ((tid_t)-1) /* Error value for tid_t. */
-#define MAX_THREADS 127
+#define MAX_THREADS 512
 
 /* Thread priorities. */
 #define PRI_MIN 0      /* Lowest priority. */
@@ -97,8 +97,10 @@ struct thread {
   struct list_elem elem_in_process;
 #ifdef USERPROG
   /* Owned by process.c. */
-  struct process* pcb;        /* Process control block if this thread is a userprog */
-  struct semaphore exit_sema; /* Thread exit semaphore for pthread_join */
+  struct process* pcb;                    /* Process control block if this thread is a userprog */
+  struct thread_list_elem* exit_notifier; /* Point to this thread's elem in pcb->thread_list. */
+  int id_in_process;
+
 #endif
 
   /* Owned by thread.c. */
@@ -118,6 +120,8 @@ struct thread_list_elem {
   tid_t tid; /* Thread identifier, stored separately so
                                pthread_join can match by tid after td is freed. */
   bool exited;
+  struct semaphore exit_sema; /* Signaled when thread exits. Lives on this
+                                 persistent elem, not the ephemeral thread struct. */
 };
 /* Types of scheduler that the user can request the kernel
  * use to schedule threads at runtime. */
