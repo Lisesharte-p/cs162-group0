@@ -16,6 +16,8 @@ typedef tid_t pid_t;
 typedef void (*pthread_fun)(void*);
 typedef void (*stub_fun)(pthread_fun, void*);
 
+static unsigned long pid_bitmap_buf[32];
+static struct bitmap* pid_bitmap;
 /* The process control block for a given process. Since
    there can be multiple threads per process, we need a separate
    PCB from the TCB. All TCBs in a process will have a pointer
@@ -69,7 +71,7 @@ struct process_start_bundle {
   struct semaphore* sema;
   bool success;
   tid_t parent_tid;
-  bool is_fork;
+  pid_t child_pid;
 };
 struct fork_bundle {
   struct semaphore fork_sema;
@@ -78,6 +80,8 @@ struct fork_bundle {
   uint32_t* pd;
   struct list* fd_list;
   bool success;
+  pid_t child_pid;
+  pid_t parent_pid;
 };
 struct pthread_bundle {
   struct process* process_;

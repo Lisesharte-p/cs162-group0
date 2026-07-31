@@ -19,6 +19,7 @@
 #include "threads/synch.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "lib/kernel/bitmap.h"
 #include <ctype.h>
 static struct process* pid_pcb[MAX_THREADS];
 static struct semaphore temporary;
@@ -36,6 +37,9 @@ void userprog_init(void) {
   struct thread* t = thread_current();
   bool success;
 
+  pid_bitmap = bitmap_create_in_buf(MAX_THREADS, pid_bitmap_buf, sizeof pid_bitmap_buf);
+  bitmap_set(pid_bitmap, 0, true);
+
   /* Allocate process control block
      It is imoprtant that this is a call to calloc and not malloc,
      so that t->pcb->pagedir is guaranteed to be NULL (the kernel's
@@ -48,6 +52,17 @@ void userprog_init(void) {
   ASSERT(success);
 }
 
+static pid_t allocate_pid(void) {
+  pid_t pid;
+
+  pid = bitmap_scan_and_flip(pid_bitmap, 1, 1, false);
+  if (pid >= MAX_THREADS)
+    pid = TID_ERROR;
+
+  return pid;
+}
+
+void pid_recycle(pid_t pid) { bitmap_reset(pid_bitmap, pid); }
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
@@ -84,13 +99,15 @@ pid_t process_execute(const char* file_name) {
     palloc_free_page(fn_copy);
     free(bundle);
     free(load_sema);
+    return TID_ERROR;
   }
 
   sema_down(bundle->sema);
+  pid_t child_pid = bundle->child_pid;
   palloc_free_page(fn_copy);
   free(bundle);
   free(load_sema);
-  return tid;
+  return child_pid;
 }
 
 /* A thread function that loads a user process and starts it
@@ -137,7 +154,8 @@ void start_process(void* file_name_) {
     list_init(&new_pcb->user_stack_pages);
     list_init(&new_pcb->sema_list);
     list_init(&new_pcb->lock_list);
-    new_pcb->main_pid = thread_current()->tid;
+    new_pcb->main_pid = allocate_pid();
+    bundle->child_pid = new_pcb->main_pid;
     new_pcb->exit_code = 0;
 
     new_pcb->thread_id_bitmap = bitmap_create_in_buf(MAX_THREADS, new_pcb->thread_id_bitmap_buf,
@@ -146,7 +164,7 @@ void start_process(void* file_name_) {
     t->id_in_process = bitmap_scan_and_flip(new_pcb->thread_id_bitmap, 1, 1, false);
     // Continue initializing the PCB as normal
     t->pcb->main_thread = t;
-    pid_pcb[new_pcb->main_thread->tid] = new_pcb; //register process
+    pid_pcb[new_pcb->main_pid] = new_pcb; //register process
     /* Extract the executable name (first token). */
     size_t fn_len = strlen(file_name);
     size_t pn_len = 0;
@@ -289,10 +307,13 @@ int fork_start(void* bundle) { //fork a new process, should also modify the thre
 
   t->pcb = f_b->child_pcb;
   t->pcb->main_thread = t;
-  t->pcb->main_pid = thread_current()->tid;
+  t->pcb->main_pid = allocate_pid();
+
+  f_b->child_pid = t->pcb->main_pid;
   t->pcb->exit_code = 0;
-  pid_pcb[t->tid] = t->pcb;
+  pid_pcb[t->pcb->main_pid] = t->pcb;
   t->pcb->pagedir = f_b->pd;
+  t->pcb->parent_pid = f_b->parent_pid;
   list_init(&t->pcb->thread_list);
   /* Re-initialize thread_id_bitmap (memcpy from parent copied a stale
      pointer to parent's thread_id_bitmap_buf). */
@@ -331,17 +352,19 @@ int fork_start(void* bundle) { //fork a new process, should also modify the thre
 
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
-int process_wait(pid_t child_pid UNUSED) {
+int process_wait(pid_t child_pid) {
   struct process* wait_thread = get_process(child_pid);
-  if ((!wait_thread || (thread_current()->tid != wait_thread->parent_pid) &&
-                           thread_current()->pcb->main_pid != wait_thread->parent_pid)) {
+  if (!wait_thread ||
+      ((thread_current()->tid != wait_thread->parent_pid) &&
+       thread_current()->pcb->main_pid != wait_thread->parent_pid) ||
+      child_pid == thread_current()->pcb->main_pid) {
     return -1;
   }
   sema_down(&wait_thread->sema_exit);
   int exit_code = wait_thread->exit_code;
   free(wait_thread);
   pid_pcb[child_pid] = NULL;
-  tid_recycle(child_pid);
+  pid_recycle(child_pid);
   return exit_code;
 }
 void file_close_list(struct list* file_list) {
@@ -833,7 +856,7 @@ static bool install_page(void* upage, void* kpage, bool writable) {
 bool is_main_thread(struct thread* t, struct process* p) { return p->main_thread == t; }
 
 /* Gets the PID of a process */
-pid_t get_pid(struct process* p) { return (pid_t)p->main_thread->tid; }
+pid_t get_pid(struct process* p) { return p->main_pid; }
 
 /* Creates a new stack for the thread and sets up its arguments.
    Stores the thread's entry point into *EIP and its initial stack

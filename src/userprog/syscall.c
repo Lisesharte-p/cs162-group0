@@ -383,19 +383,20 @@ pid_t exec_(const char* cmd_line) {
     free(bundle);
     return -1;
   }
-  bundle->parent_tid = thread_current()->tid;
+  bundle->parent_tid = thread_current()->pcb->main_pid;
   strlcpy(bundle->file_name, cmd_line, strlen(cmd_line) + 1);
-  pid_t new_process_pid = thread_create(cmd_line, PRI_DEFAULT, start_process, (void*)bundle);
+  thread_create(cmd_line, PRI_DEFAULT, start_process, (void*)bundle);
 
   sema_down(&sync_sig);
   bool success = bundle->success;
+  pid_t child_pid = bundle->child_pid;
   palloc_free_page(bundle->file_name);
   free(bundle);
   if (!success) {
     return -1;
   }
 
-  return new_process_pid;
+  return child_pid;
 }
 
 bool add_file_descriptor(struct list* list_, struct file* file_, int fd) {
@@ -574,7 +575,7 @@ int fork_(struct intr_frame* f) { //reopen files, copy pagedir and set to COW
   list_init(&child_pcb->sema_list);
 
   sema_init(&bundle->fork_sema, 0);
-
+  bundle->parent_pid = thread_current()->pcb->main_pid;
   pid_t child_pid = thread_create(thread_current()->name, PRI_DEFAULT, fork_start, (void*)bundle);
 
   sema_down(&bundle->fork_sema);
@@ -583,9 +584,10 @@ int fork_(struct intr_frame* f) { //reopen files, copy pagedir and set to COW
     child_pid = -1;
   }
   free(bundle->child_state);
+  int res = bundle->child_pid;
   free(bundle);
-  // process_wait(child_pid);
-  return child_pid;
+  // process_wait(res);
+  return res;
 }
 
 void validate(uint32_t* args, int n) {
