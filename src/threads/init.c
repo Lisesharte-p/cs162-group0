@@ -112,11 +112,40 @@ int main(void) {
   exception_init();
   syscall_init();
 #endif
-
   /* Start thread scheduler and enable interrupts. */
   thread_start();
   serial_init_queue();
   timer_calibrate();
+
+  /* 图形模式自检:四色象限。必须放在 timer_calibrate() 之后:
+     loops_per_tick 之前还没标定, timer_mdelay 会变成 0 延时。 */
+  init_graphic_mode();
+  for (int i = 0; i < 640; ++i) {
+    for (int j = 0; j < 400; ++j) {
+      uint32_t c = (i < 320 && j < 240) ? 0x00FF0000 : /* 红:左上 */
+                       (i < 320) ? 0x0000FF00
+                                 : /* 绿:左下 */
+                       (j < 240) ? 0x000000FF
+                                 : /* 蓝:右上 */
+                       0x00FFFFFF; /* 白:右下 */
+      put_pixel(i, j, c);
+    }
+  }
+  // uint16_t code = kbd_read();
+  // if (code == 0xe048) {
+  //   for (int i = 0; i < 640; ++i) {
+  //     for (int j = 0; j < 400; ++j) {
+  //       uint32_t c = (i < 320 && j < 240) ? 0x0000FF00 : /* 红:左上 */
+  //                        (i < 320) ? 0x00FF00
+  //                                  : /* 绿:左下 */
+  //                        (j < 240) ? 0x00FFFFFF
+  //                                  : /* 蓝:右上 */
+  //                        0x000000FF; /* 白:右下 */
+  //       put_pixel(i, j, c);
+  //     }
+  //   }
+  // }
+  // timer_mdelay(20000);
 
 #ifdef USERPROG
   /* Give main thread a minimal PCB so it can launch the first process */

@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "devices/input.h"
+#include "devices/intq.h"
 #include "devices/shutdown.h"
 #include "threads/interrupt.h"
 #include "threads/io.h"
@@ -23,15 +24,26 @@ static bool caps_lock;
 
 /* Number of keys pressed. */
 static int64_t key_cnt;
-
+static struct intq kbd_intq;
 static intr_handler_func keyboard_interrupt;
 
 /* Initializes the keyboard. */
-void kbd_init(void) { intr_register_ext(0x21, keyboard_interrupt, "8042 Keyboard"); }
+void kbd_init(void) {
+  intq_init(&kbd_intq);
+  intr_register_ext(0x21, keyboard_interrupt, "8042 Keyboard");
+}
 
 /* Prints keyboard statistics. */
 void kbd_print_stats(void) { printf("Keyboard: %lld keys pressed\n", key_cnt); }
-
+static void kbd_put_raw(uint16_t code) {
+  if (intq_full(&kbd_intq)) {
+    return; /* 中断上下文不能阻塞,满了就丢 */
+  }
+  if (code > 0xff) {
+    intq_putc(&kbd_intq, code >> 8);
+  }
+  intq_putc(&kbd_intq, (uint8_t)code);
+}
 /* Maps a set of contiguous scancodes into characters. */
 struct keymap {
   uint8_t first_scancode; /* First scancode. */
@@ -84,7 +96,7 @@ static void keyboard_interrupt(struct intr_frame* args UNUSED) {
   code = inb(DATA_REG);
   if (code == 0xe0)
     code = (code << 8) | inb(DATA_REG);
-
+  kbd_put_raw(code);
   /* Bit 0x80 distinguishes key press from key release
      (even if there's a prefix). */
   release = (code & 0x80) != 0;
@@ -160,4 +172,24 @@ static bool map_key(const struct keymap k[], unsigned scancode, uint8_t* c) {
     }
 
   return false;
+}
+uint16_t kbd_read(void) {
+  enum intr_level old_l = intr_disable();
+  uint16_t code = intq_getc(&kbd_intq);
+  if (code == 0xe0) {
+    code = (code << 8) | intq_getc(&kbd_intq);
+  }
+  intr_set_level(old_l);
+  return code;
+}
+bool kbd_try_read(uint16_t* code) {
+  enum intr_level old_level = intr_disable();
+  bool ok = !intq_empty(&kbd_intq);
+  if (ok) {
+    *code = intq_getc(&kbd_intq);
+    if (*code == 0xE0 && !intq_empty(&kbd_intq))
+      *code = (*code << 8) | intq_getc(&kbd_intq);
+  }
+  intr_set_level(old_level);
+  return ok;
 }
