@@ -43,9 +43,6 @@ static size_t cx, cy;
 #define VBE_ID5 0xb0c0
 #define VBE_LFB_ENABLE 0x40
 
-#define LFB_XRES 640
-#define LFB_YRES 400
-
 /* LFB 的物理地址不能硬编码:QEMU 11 的 stdvga(PCI 变体)把帧缓冲
    BAR 分配在 0xfd000000,旧版本镜像在 0xe0000000。从 PCI 配置空间
    读 VGA 设备 (00:02.0) 的 BAR0 得到真实地址。 */
@@ -98,22 +95,25 @@ void init_graphic_mode() {
     lfb_phys = pci_config_read(0, 2, 0, 0x10) & 0xFFFFFFF0;
     if (lfb_phys == 0)
       return; /* 没有 VGA 设备(-v 模式),保持文本显示 */
-    map_lfb(lfb_phys, LFB_XRES * LFB_YRES * 4);
+    map_lfb(lfb_phys, VGA_LFB_XRES * VGA_LFB_YRES * 4);
     vbe_out(VBE_ENABLE_INDEX, VBE_DISABLED);
     vbe_out(VBE_INDEX_ID, VBE_ID5);
-    vbe_out(VBE_XRES, LFB_XRES);
-    vbe_out(VBE_YRES, LFB_YRES);
+    vbe_out(VBE_XRES, VGA_LFB_XRES);
+    vbe_out(VBE_YRES, VGA_LFB_YRES);
     vbe_out(VBE_BPP, 32);
     vbe_out(VBE_ENABLE_INDEX, VBE_LFB_ENABLE | VBE_ENABLED);
   }
 }
 void put_pixel(int x, int y, uint32_t rgb) {
   uint32_t* fb = (uint32_t*)lfb_phys; /* identity 映射:VA == PA */
-  fb[y * LFB_XRES + x] = rgb; /* 32bpp:值 0x00RRGGBB,内存字节序正好是 B,G,R,0 */
+  fb[y * VGA_LFB_XRES + x] = rgb; /* 32bpp:值 0x00RRGGBB,内存字节序正好是 B,G,R,0 */
 }
 
 /* 返回线性帧缓冲的内核虚拟地址(640x400x32bpp),供整屏 blit 用。 */
 uint32_t* vga_get_fb(void) { return (uint32_t*)lfb_phys; }
+
+/* 返回线性帧缓冲的物理地址(PCI BAR0),供映射进用户进程页表。 */
+uintptr_t vga_get_lfb_phys(void) { return lfb_phys; }
 /* Initializes the VGA text display. */
 static void init(void) {
   /* Already initialized? */

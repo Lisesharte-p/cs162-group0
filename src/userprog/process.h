@@ -8,6 +8,13 @@
 // These defines will be used in Project 2: Multithreading
 #define MAX_STACK_PAGES (1 << 11)
 
+/* VGA 线性帧缓冲映射到用户地址空间的位置(内核在 load 时映射,
+   doom 等用户程序直接往这里写像素)。 */
+#define USER_LFB_VA ((void*)0x30000000)
+
+/* 把 VGA 线性帧缓冲映射进进程页表(用户可写),fork 子进程也要调。 */
+void map_lfb_user(uint32_t* pd);
+
 /* PIDs and TIDs are the same type. PID should be
    the TID of the main thread of the process */
 typedef tid_t pid_t;
@@ -23,12 +30,6 @@ static struct bitmap* pid_bitmap;
    PCB from the TCB. All TCBs in a process will have a pointer
    to the PCB, and the PCB will have a pointer to the main thread
    of the process, which is `special`. */
-struct user_stack_page {
-  struct list_elem elem;
-  void* upage; /* User virtual address of the stack page */
-  tid_t tid;   /* Owning thread's TID */
-};
-
 struct process {
   /* Owned by process.c. */
   uint32_t* pagedir;          /* Page directory. */
@@ -36,7 +37,6 @@ struct process {
   struct thread* main_thread; /* Pointer to main thread */
   struct list fd_list;
   struct list thread_list;
-  struct list user_stack_pages;
   struct list sema_list;
   struct list lock_list;
   int next_fd;
@@ -100,6 +100,7 @@ void process_exit(void);
 void process_activate(void);
 void id_recycle(tid_t tid, struct process* p);
 bool is_main_thread(struct thread*, struct process*);
+void file_close_list(struct list* file_list);
 pid_t get_pid(struct process*);
 int fork_start(void* bundle);
 tid_t pthread_execute(stub_fun, pthread_fun, void*);
@@ -109,4 +110,5 @@ void pthread_exit_main(void);
 struct thread* get_thread_in_process(tid_t tid, struct process* p);
 void sema_close_list(struct list*);
 void lock_close_list(struct list*);
+bool extend_stack(void* fault_addr);
 #endif /* userprog/process.h */

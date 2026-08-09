@@ -158,3 +158,10 @@ void sema_up(sema_t* sema) {
 tid_t get_tid(void) { return syscall0(SYS_GET_TID); }
 
 pid_t fork(void) { return syscall0(SYS_FORK); }
+
+/* 返回自启动以来的毫秒数。 */
+unsigned time_ms(void) { return (unsigned)syscall0(SYS_TIME_MS); }
+
+/* 非阻塞读一个原始 scancode(含 E0 前缀与 make/break 位);
+   没有按键时返回 -1。 */
+int key_poll(void) { return syscall0(SYS_KEY_POLL); }

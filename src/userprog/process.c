@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "devices/vga.h"
 #include "userprog/gdt.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
@@ -16,6 +17,7 @@
 #include "threads/interrupt.h"
 #include "threads/malloc.h"
 #include "threads/palloc.h"
+#include "threads/pte.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
@@ -151,7 +153,6 @@ void start_process(void* file_name_) {
     new_pcb->next_sid = 0;
     new_pcb->next_lid = 0;
     list_init(&new_pcb->fd_list);
-    list_init(&new_pcb->user_stack_pages);
     list_init(&new_pcb->sema_list);
     list_init(&new_pcb->lock_list);
     new_pcb->main_pid = allocate_pid();
@@ -634,6 +635,10 @@ bool load(const char* file_name, void (**eip)(void), void** esp) {
     goto done;
   process_activate();
 
+  /* 把 VGA 线性帧缓冲映射进用户地址空间,让 doom 这类程序
+     可以直接往 USER_LFB_VA 写像素。 */
+  map_lfb_user(t->pcb->pagedir);
+
   /* Open executable file. */
   file = filesys_open(file_name);
   if (file == NULL) {
@@ -825,12 +830,42 @@ static bool setup_stack(void** esp) {
   kpage = palloc_get_page(PAL_USER | PAL_ZERO);
   if (kpage != NULL) {
     success = install_page(((uint8_t*)PHYS_BASE) - PGSIZE, kpage, true);
-    if (success)
+    if (success) {
       *esp = PHYS_BASE;
-    else
+      struct thread* t = thread_current();
+      t->user_stack_start = ((uint8_t*)PHYS_BASE);
+      t->user_stack_end = t->user_stack_start - PGSIZE;
+    } else
       palloc_free_page(kpage);
   }
   return success;
+}
+
+/* 把 VGA 线性帧缓冲映射到进程页表,固定用户地址 USER_LFB_VA,
+   用户可写。不能直接用 pagedir_set_page: 它 ASSERT 物理地址必须
+   在 RAM 内,而 LFB 在 PCI 空洞(如 QEMU 11 的 0xfd000000),
+   所以要手工构造 PTE(加上 USER 位)。 */
+void map_lfb_user(uint32_t* pd) {
+  uintptr_t phys = vga_get_lfb_phys();
+  size_t bytes = VGA_LFB_XRES * VGA_LFB_YRES * 4;
+  size_t off;
+
+  if (phys == 0)
+    return; /* 无 VGA(-v 模式),跳过 */
+
+  for (off = 0; off < bytes; off += PGSIZE) {
+    void* va = (char*)USER_LFB_VA + off;
+    size_t pde_idx = pd_no(va), pte_idx = pt_no(va);
+    uint32_t* pt;
+    if (pd[pde_idx] == 0) {
+      pt = palloc_get_page(PAL_ASSERT | PAL_ZERO);
+      pd[pde_idx] = pde_create(pt);
+    } else
+      pt = pde_get_pt(pd[pde_idx]);
+    pt[pte_idx] = (phys + off) | PTE_P | PTE_W | PTE_U;
+  }
+  printf("map_lfb_user: phys=%#x first_pte=%#x\n", phys,
+         pd[pd_no(USER_LFB_VA)] ? pde_get_pt(pd[pd_no(USER_LFB_VA)])[0] : 0);
 }
 
 /* Adds a mapping from user virtual address UPAGE to kernel
@@ -879,13 +914,9 @@ bool setup_thread(void (**eip)(void) UNUSED, void** esp UNUSED, stub_fun sf, str
     void* upage = ((uint8_t*)0xc0000000 - t->id_in_process * (PGSIZE)) - PGSIZE;
     success = install_page(upage, kpage, true);
     if (success) {
-      *esp = 0xc0000000 - t->id_in_process * (PGSIZE);
-      struct user_stack_page* sp = malloc(sizeof(struct user_stack_page));
-      if (sp != NULL) {
-        sp->upage = upage;
-        sp->tid = t->tid;
-        list_push_back(&t->pcb->user_stack_pages, &sp->elem);
-      }
+      *esp = (void*)(0xc0000000 - t->id_in_process * (PGSIZE));
+      t->user_stack_start = upage;
+      t->user_stack_end = upage + PGSIZE;
     } else
       palloc_free_page(kpage);
   }
@@ -914,7 +945,7 @@ tid_t pthread_execute(stub_fun sf UNUSED, pthread_fun tf UNUSED, void* arg UNUSE
   tid_t new_tid = thread_create("pthread_name placeholder", PRI_DEFAULT, start_pthread, (void*)p_b);
   if (new_tid == TID_ERROR) {
     free(p_b);
-    return;
+    return TID_ERROR;
   }
   sema_down(&p_b->pt_start_sema);
   // free(p_b);
@@ -1039,23 +1070,14 @@ void pthread_exit(void) { //wake waiters, release locks.
     head = list_next(head);
     lock_release(lk);
   }
-  /* Free this thread's user stack page.
+  /* Free this thread's user stack pages.
      thread_switch_tail handles the exit notification (exited=true, sema_up)
      so pthread_join can clean up regardless of how the thread exited. */
-  struct list_elem* sp_elem = list_begin(&t->pcb->user_stack_pages);
-  struct list_elem* sp_tail = list_end(&t->pcb->user_stack_pages);
-  while (sp_elem != sp_tail) {
-    struct user_stack_page* sp = list_entry(sp_elem, struct user_stack_page, elem);
-    sp_elem = list_next(sp_elem);
-    if (sp->tid == t->tid) {
-      void* kpage = pagedir_get_page(t->pcb->pagedir, sp->upage);
-      if (kpage != NULL) {
-        pagedir_clear_page(t->pcb->pagedir, sp->upage);
-        palloc_free_page(kpage);
-      }
-      list_remove(&sp->elem);
-      free(sp);
-      break;
+  for (void* upage = t->user_stack_start; upage < t->user_stack_end; upage += PGSIZE) {
+    void* kpage = pagedir_get_page(t->pcb->pagedir, upage);
+    if (kpage != NULL) {
+      pagedir_clear_page(t->pcb->pagedir, upage);
+      palloc_free_page(kpage);
     }
   }
   if (t->exit_notifier != NULL && t->pcb != NULL) {
@@ -1140,4 +1162,22 @@ struct thread* get_thread_in_process(tid_t tid, struct process* p) {
   }
   intr_set_level(old_level);
   return NULL;
+}
+
+bool extend_stack(void* fault_addr) {
+  struct thread* t = thread_current();
+
+  uint8_t* kpage;
+  bool success = false;
+  kpage = palloc_get_page(PAL_USER | PAL_ZERO);
+  if (kpage != NULL) {
+    void* upage = pg_round_down(fault_addr);
+    success = install_page(upage, kpage, true);
+    if (success) {
+      t->user_stack_end = t->user_stack_end > upage ? upage : t->user_stack_end;
+    } else {
+      palloc_free_page(kpage);
+    }
+  }
+  return success;
 }

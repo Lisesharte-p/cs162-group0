@@ -54,4 +54,9 @@ SECTIONS
   .debug_varnames  0 : { *(.debug_varnames) }
   /DISCARD/ : { *(.note.GNU-stack) }
   /DISCARD/ : { *(.eh_frame) }
+  /* GCC 16+ 默认在对象里塞 .note.gnu.property(CET 特性标记),
+     链接器会把它做成一个与主代码段同页的只读 LOAD 段,导致
+     Pintos 加载器 install_page 报"页已存在"、程序静默加载失败。
+     Pintos 不需要 CET,直接丢弃。 */
+  /DISCARD/ : { *(.note.gnu.property) }
 }

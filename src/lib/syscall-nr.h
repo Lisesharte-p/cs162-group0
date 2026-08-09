@@ -40,6 +40,10 @@ enum {
   SYS_READDIR, /* Reads a directory entry. */
   SYS_ISDIR,   /* Tests if a fd represents a directory. */
   SYS_INUMBER, /* Returns the inode number for a fd. */
+
+  /* doom 移植支持。 */
+  SYS_TIME_MS,  /* Returns milliseconds since boot. */
+  SYS_KEY_POLL, /* Non-blocking raw scancode read, -1 if none. */
 };
 
 #endif /* lib/syscall-nr.h */

@@ -2,9 +2,11 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
+#include "devices/vga.h"
 #include "threads/init.h"
 #include "threads/pte.h"
 #include "threads/palloc.h"
+#include "userprog/process.h"
 
 static void invalidate_pagedir(uint32_t*);
 
@@ -34,8 +36,14 @@ void pagedir_destroy(uint32_t* pd) {
       uint32_t* pte;
 
       for (pte = pt; pte < pt + PGSIZE / sizeof *pte; pte++)
-        if (*pte & PTE_P)
+        if (*pte & PTE_P) {
+          /* LFB 页不是 palloc 分配的内存(物理地址是 PCI 空洞里的
+             显存),ptov 会断言,不能释放。 */
+          void* va = (void*)((pde - pd) << PDSHIFT | (pte - pt) << PTSHIFT);
+          if (va >= USER_LFB_VA && va < USER_LFB_VA + VGA_LFB_XRES * VGA_LFB_YRES * 4)
+            continue;
           palloc_free_page(pte_get_page(*pte));
+        }
       palloc_free_page(pt);
     }
   palloc_free_page(pd);

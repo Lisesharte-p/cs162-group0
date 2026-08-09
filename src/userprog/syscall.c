@@ -4,7 +4,16 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "userprog/process.h"
+#include "userprog/pagedir.h"
+#include "devices/input.h"
+#include "devices/kbd.h"
 #include "devices/shutdown.h"
+#include "devices/timer.h"
+#include "devices/vga.h"
+#include "filesys/file.h"
+#include "filesys/filesys.h"
+#include "lib/string.h"
+#include "threads/malloc.h"
 #include "threads/vaddr.h"
 #include "threads/pte.h"
 #include "threads/palloc.h"
@@ -14,6 +23,12 @@ void remove_file(struct list* list_, int fd);
 bool add_file_descriptor(struct list* list_, struct file* file_, int fd);
 static struct sema_descriptor* find_sema(int sid, struct process* pcb);
 static struct lock_descriptor* find_lock(int lid, struct process* pcb);
+void validate(uint32_t* args, int n);
+void exit_on_err(void);
+pid_t exec_(const char* cmd_line);
+int wait_(pid_t pid);
+int fork_(struct intr_frame* f);
+int close_file(struct list* list_, int fd);
 void syscall_init(void) { intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall"); }
 
 static void syscall_handler(struct intr_frame* f UNUSED) {
@@ -36,6 +51,20 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     process_exit();
   }
 
+  if (args[0] == SYS_TIME_MS) {
+    /* 自启动以来的毫秒数(timer 100Hz,每 tick 10ms)。 */
+    f->eax = timer_ticks() * (1000 / TIMER_FREQ);
+    return;
+  }
+
+  if (args[0] == SYS_KEY_POLL) {
+    /* 非阻塞读原始 scancode(含 E0 前缀与 make/break 位),
+       没有按键时返回 -1。 */
+    uint16_t code;
+    f->eax = kbd_try_read(&code) ? (int)code : -1;
+    return;
+  }
+
   if (args[0] == SYS_PRACTICE) {
     validate(args, 1);
     f->eax = args[1] + 1;
@@ -49,7 +78,7 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
   if (args[0] == SYS_EXEC) {
     validate(args, 1);
     // printf("%p\n", args[1]);
-    pid_t pid = exec_(args[1]);
+    pid_t pid = exec_((const char*)args[1]);
     f->eax = pid;
   }
 
@@ -91,7 +120,7 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
       f->eax = -1;
       return;
     }
-    memcpy(buf, args[2], sizeof(char) * args[3]);
+    memcpy(buf, (void*)args[2], sizeof(char) * args[3]);
     int off = file_write(file_node->file_descriptor, buf, args[3]);
 
     f->eax = off;
@@ -114,7 +143,7 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
       f->eax = -1;
       return;
     }
-    strlcpy(file_name, args[1], strlen(args[1]) + 1);
+    strlcpy(file_name, (const char*)args[1], strlen((const char*)args[1]) + 1);
     // printf("opening %s\n",file_name);
     struct file* file_new = filesys_open((char*)(file_name));
     if (!file_new) {
@@ -201,7 +230,7 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     if (!args[1]) {
       exit_on_err();
     }
-    strlcpy(file_name, args[1], strlen(args[1]) + 1);
+    strlcpy(file_name, (const char*)args[1], strlen((const char*)args[1]) + 1);
     bool success = filesys_create(file_name, args[2]);
     f->eax = 1;
     palloc_free_page(file_name);
@@ -224,7 +253,7 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
       return;
     }
 
-    file_seek(fd->file_descriptor, (int32_t*)args[2]);
+    file_seek(fd->file_descriptor, args[2]);
   }
   if (args[0] == SYS_TELL) {
     validate(args, 1);
@@ -348,7 +377,7 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
   }
   if (args[0] == SYS_PT_CREATE) {
     validate(args, 3);
-    f->eax = pthread_execute(args[1], args[2], args[3]);
+    f->eax = pthread_execute((stub_fun)args[1], (pthread_fun)args[2], (void*)args[3]);
     return;
   }
   if (args[0] == SYS_PT_EXIT) {
@@ -555,6 +584,12 @@ int fork_(struct intr_frame* f) { //reopen files, copy pagedir and set to COW
       if (!(pt[m] & PTE_P)) {
         continue;
       }
+      void* upage = (void*)((j << PDSHIFT) | (m << PTSHIFT));
+      /* LFB 页不是进程内存(物理地址不在 RAM,pte_get_page 的 ptov
+         会断言 PANIC),不能拷贝;子进程在循环结束后重新映射一份。
+         必须先判断再取页,否则 pte_get_page 就先炸了。 */
+      if (upage >= USER_LFB_VA && upage < USER_LFB_VA + VGA_LFB_XRES * VGA_LFB_YRES * 4)
+        continue;
       uint32_t* page_base = pte_get_page(pt[m]);
       uint32_t* new_page = palloc_get_page(PAL_USER);
       if (!new_page) { //should free all pages allocated.
@@ -566,17 +601,19 @@ int fork_(struct intr_frame* f) { //reopen files, copy pagedir and set to COW
         return -1;
       }
       memcpy(new_page, page_base, PGSIZE);
-      void* upage = (void*)((j << PDSHIFT) | (m << PTSHIFT));
       pagedir_set_page(pd_child, upage, new_page, true, false);
     }
   }
+
+  /* 与父进程一致,子进程也映射一份 LFB。 */
+  map_lfb_user(pd_child);
 
   list_init(&child_pcb->lock_list);
   list_init(&child_pcb->sema_list);
 
   sema_init(&bundle->fork_sema, 0);
   bundle->parent_pid = thread_current()->pcb->main_pid;
-  pid_t child_pid = thread_create(thread_current()->name, PRI_DEFAULT, fork_start, (void*)bundle);
+  pid_t child_pid = thread_create(thread_current()->name, PRI_DEFAULT, (thread_func*)fork_start, (void*)bundle);
 
   sema_down(&bundle->fork_sema);
 
@@ -592,7 +629,7 @@ int fork_(struct intr_frame* f) { //reopen files, copy pagedir and set to COW
 
 void validate(uint32_t* args, int n) {
   for (int i = 1; i <= n; ++i) {
-    if (!is_user_vaddr(args[i])) { //validate the passed pointers
+    if (!is_user_vaddr((const void*)args[i])) { //validate the passed pointers
       exit_on_err();
     }
   }

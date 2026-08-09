@@ -1,18 +1,20 @@
-/* doomgeneric 的 Pintos 平台层。
-   引擎渲染出 640x400 的 RGBA8888 帧(i_video.c 用 DOOMGENERIC_RESX/
-   RESY 初始化 s_Fb,32bpp 的 offset 是 R=16 G=8 B=0),DG_DrawFrame
-   整屏拷到 VBE 线性帧缓冲;输入走 kbd.c 的原始 scancode 队列。 */
+/* doomgeneric 的 Pintos 用户态平台层。
+   内核在进程加载时把 VGA 线性帧缓冲映射到 0x30000000
+   (userprog/process.h 的 USER_LFB_VA),图形模式由内核在启动时
+   设置好。本文件只负责:帧拷贝、时钟、键盘、游戏主循环。 */
 
 #include "doomgeneric.h"
 #include "doomkeys.h"
 
 #include <string.h>
+#include <syscall.h>
 
-#include "devices/kbd.h"
-#include "devices/timer.h"
-#include "devices/vga.h"
+/* 内核映射 LFB 的用户虚拟地址(与 USER_LFB_VA 一致)。 */
+#define LFB ((uint32_t*)0x30000000)
+#define LFB_XRES 640
+#define LFB_YRES 400
 
-/* i_video.c 里的全局量:fb_scaling=2 让引擎把 320x200 放大到 640x400,
+/* i_video.c 的全局量:fb_scaling=2 让引擎把 320x200 放大到 640x400,
    正好铺满 LFB。 */
 extern int fb_scaling;
 
@@ -22,10 +24,10 @@ static unsigned char convert_to_doom_key(uint8_t scan) {
   switch (scan) {
     case 0x01: return KEY_ESCAPE;
     case 0x1c: return KEY_ENTER;
-    case 0x39: return KEY_USE;              /* 空格:开门/用 */
-    case 0x1d: return KEY_FIRE;             /* Ctrl:开火 */
+    case 0x39: return KEY_USE;               /* 空格:开门/用 */
+    case 0x1d: return KEY_FIRE;              /* Ctrl:开火 */
     case 0x2a: case 0x36: return KEY_RSHIFT; /* Shift:跑 */
-    case 0x48: return KEY_UPARROW;          /* QEMU 里方向键是 E0 前缀 */
+    case 0x48: return KEY_UPARROW;           /* QEMU 里方向键是 E0 前缀 */
     case 0x50: return KEY_DOWNARROW;
     case 0x4b: return KEY_LEFTARROW;
     case 0x4d: return KEY_RIGHTARROW;
@@ -44,40 +46,56 @@ static unsigned char convert_to_doom_key(uint8_t scan) {
     case 0x05: return '4'; case 0x06: return '5'; case 0x07: return '6';
     case 0x08: return '7'; case 0x09: return '8'; case 0x0a: return '9';
     case 0x0b: return '0';
-    default: return 0;                      /* 引擎会忽略 data1==0 的键 */
+    default: return 0; /* 引擎会忽略 data1==0 的键 */
   }
 }
 
 void DG_Init() {
-  fb_scaling = 2;               /* 320x200 → 640x400,与 LFB 分辨率一致 */
-  init_graphic_mode();          /* 幂等(static inited),已在 init.c 调过 */
+  fb_scaling = 2; /* 320x200 → 640x400,与 LFB 分辨率一致 */
 }
 
 void DG_DrawFrame() {
-  /* DG_ScreenBuffer 已是 640x400 的 0x00RRGGBB,与 LFB 字节序一致,整屏拷贝。 */
-  memcpy(vga_get_fb(), DG_ScreenBuffer, DOOMGENERIC_RESX * DOOMGENERIC_RESY * 4);
+  /* DG_ScreenBuffer 已是 640x400 的 0x00RRGGBB,与 LFB 字节序一致。 */
+  memcpy(LFB, DG_ScreenBuffer, LFB_XRES * LFB_YRES * 4);
 }
 
 void DG_SleepMs(uint32_t ms) {
-  timer_msleep(ms);
+  /* 没有 sleep syscall,busy-spin 在 time_ms 上。 */
+  unsigned start = time_ms();
+  while (time_ms() - start < ms)
+    ;
 }
 
 uint32_t DG_GetTicksMs() {
-  /* TIMER_FREQ=100,每 tick 10ms。 */
-  return timer_ticks() * (1000 / TIMER_FREQ);
+  return time_ms();
 }
 
 int DG_GetKey(int* pressed, unsigned char* doomKey) {
-  uint16_t code;
+  int code = key_poll();
+  if (code < 0)
+    return 0; /* 没有事件 */
 
-  if (!kbd_try_read(&code))
-    return 0;                   /* 没有事件 */
-
-  *pressed = !(code & 0x80);    /* 0x80 位:0=按下,1=松开 */
+  *pressed = !(code & 0x80); /* 0x80 位:0=按下,1=松开 */
   *doomKey = convert_to_doom_key((uint8_t)code & 0x7F);
   return 1;
 }
 
 void DG_SetWindowTitle(const char* title) {
-  /* 无窗口标题可言,忽略。 */
+  /* 没有窗口标题可言,忽略。 */
+}
+
+/* 游戏主循环:doomgeneric_Create 跑完 D_DoomMain 的初始化后,
+   每 tick 推进一帧(TryRunTics 内部按真实时间自节拍)。
+   -mb 3:zone 只申请 3MB(默认 16MB,pintos 内存装不下)。 */
+int main(int argc, char* argv[]) {
+  char* doom_argv[] = {"doom", "-mb", "4", "-iwad", "doom1.wad"};
+
+  (void)argc;
+  (void)argv;
+
+  doomgeneric_Create(5, doom_argv);
+  for (;;)
+    doomgeneric_Tick();
+
+  return 0;
 }
