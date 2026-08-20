@@ -6,12 +6,16 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/palloc.h"
+#include "userprog/process.h"
 /* Number of page faults processed. */
 static long long page_fault_cnt;
 
 static void kill(struct intr_frame*);
 static void page_fault(struct intr_frame*);
-
+bool addr_in_stack(const void* addr) {
+  return addr < PHYS_BASE && addr > STACK_LOWER;
+}
 /* Registers handlers for interrupts that can be caused by user
    programs.
 
@@ -135,6 +139,18 @@ static void page_fault(struct intr_frame* f) {
   not_present = (f->error_code & PF_P) == 0;
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
+
+
+  //stack growth
+  if (addr_in_stack(fault_addr) &&
+      ((user && f->esp - 1024 < fault_addr) || (!user && thread_current()->user_stack_end<fault_addr)) &&
+      not_present) {
+
+    bool success = extend_stack(fault_addr);
+    if (success) {
+      return;
+    }
+  }
   if (!user && is_user_vaddr(fault_addr)) { //user passed invalid ptr
 
     thread_current()->pcb->exit_code = -1;
