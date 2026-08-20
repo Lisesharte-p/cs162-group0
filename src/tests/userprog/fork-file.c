@@ -2,6 +2,7 @@
 #include "tests/lib.h"
 #include "tests/main.h"
 #include <stdlib.h>
+#include <string.h>
 
 char buf[24];
 

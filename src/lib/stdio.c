@@ -4,7 +4,6 @@
 #include <round.h>
 #include <stdint.h>
 #include <string.h>
-#include "threads/synch.h"
 
 /* Auxiliary data for vsnprintf_helper(). */
 struct vsnprintf_aux {

@@ -22,5 +22,5 @@ void test_main(void) {
     wait(i);
 
   msg("Child process exited with %d", res);
-  return 0;
 }
+

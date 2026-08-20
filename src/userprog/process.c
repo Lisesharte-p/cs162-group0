@@ -864,8 +864,8 @@ void map_lfb_user(uint32_t* pd) {
       pt = pde_get_pt(pd[pde_idx]);
     pt[pte_idx] = (phys + off) | PTE_P | PTE_W | PTE_U;
   }
-  printf("map_lfb_user: phys=%#x first_pte=%#x\n", phys,
-         pd[pd_no(USER_LFB_VA)] ? pde_get_pt(pd[pd_no(USER_LFB_VA)])[0] : 0);
+  // printf("map_lfb_user: phys=%#x first_pte=%#x\n", phys,
+  //        pd[pd_no(USER_LFB_VA)] ? pde_get_pt(pd[pd_no(USER_LFB_VA)])[0] : 0);
 }
 
 /* Adds a mapping from user virtual address UPAGE to kernel

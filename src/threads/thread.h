@@ -6,7 +6,9 @@
 #include <stdint.h>
 #include "threads/synch.h"
 #include "threads/fixed-point.h"
+#include "vaddr.h"
 
+#define STACK_LOWER (uint8_t*)PHYS_BASE - (1 << 23)
 /* States in a thread's life cycle. */
 enum thread_status {
   THREAD_RUNNING, /* Running thread. */
@@ -19,7 +21,7 @@ enum thread_status {
 /* Thread identifier type.
    You can redefine this to whatever type you like. */
 typedef int tid_t;
-#define TID_ERROR ((tid_t)-1) /* Error value for tid_t. */
+#define TID_ERROR ((tid_t) - 1) /* Error value for tid_t. */
 #define MAX_THREADS 512
 
 /* Thread priorities. */
@@ -100,6 +102,8 @@ struct thread {
   struct process* pcb;                    /* Process control block if this thread is a userprog */
   struct thread_list_elem* exit_notifier; /* Point to this thread's elem in pcb->thread_list. */
   int id_in_process;
+  void* user_stack_start; /* Lowest mapped page of this thread's user stack */
+  void* user_stack_end;   /* One page past the highest mapped page */
 
 #endif
 

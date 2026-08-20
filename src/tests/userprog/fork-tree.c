@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <syscall.h>
 #include "tests/lib.h"
 

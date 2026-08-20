@@ -33,6 +33,4 @@ void test_main(void) {
     wait(pid1); // Parent waits for the first child
     msg("Testvar should be 1 but is %d", testvar);
   }
-
-  return 0;
 }

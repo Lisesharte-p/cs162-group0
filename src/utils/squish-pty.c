@@ -7,7 +7,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stropts.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -241,11 +240,8 @@ int main(int argc __attribute__((unused)), char* argv[]) {
     fail_io("open \"%s\"", name);
 
   /* System V implementations need STREAMS configuration for the
-     slave. */
-  if (isastream(slave)) {
-    if (ioctl(slave, I_PUSH, "ptem") < 0 || ioctl(slave, I_PUSH, "ldterm") < 0)
-      fail_io("ioctl");
-  }
+     slave, but Linux has no STREAMS support (isastream() always
+     returns 0), so nothing is needed here. */
 
   /* Arrange to get notified when a child dies, by writing a byte
      to a pipe fd.  We really want to use pselect() and
