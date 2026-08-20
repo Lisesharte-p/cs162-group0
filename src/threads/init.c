@@ -39,6 +39,7 @@
 #include "devices/ide.h"
 #include "filesys/filesys.h"
 #include "filesys/fsutil.h"
+#include "filesys/buffer_cache.h"
 #endif
 
 /* Page directory with kernel mappings only. */
@@ -131,21 +132,6 @@ int main(void) {
       put_pixel(i, j, c);
     }
   }
-  // uint16_t code = kbd_read();
-  // if (code == 0xe048) {
-  //   for (int i = 0; i < 640; ++i) {
-  //     for (int j = 0; j < 400; ++j) {
-  //       uint32_t c = (i < 320 && j < 240) ? 0x0000FF00 : /* 红:左上 */
-  //                        (i < 320) ? 0x00FF00
-  //                                  : /* 绿:左下 */
-  //                        (j < 240) ? 0x00FFFFFF
-  //                                  : /* 蓝:右上 */
-  //                        0x000000FF; /* 白:右下 */
-  //       put_pixel(i, j, c);
-  //     }
-  //   }
-  // }
-  // timer_mdelay(20000);
 
 #ifdef USERPROG
   /* Give main thread a minimal PCB so it can launch the first process */
@@ -156,7 +142,9 @@ int main(void) {
   /* Initialize file system. */
   ide_init();
   locate_block_devices();
+  page_buffer_init();
   filesys_init(format_filesys);
+  
 #endif
 
   printf("Boot complete.\n");
