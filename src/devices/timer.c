@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include "devices/pit.h"
 #include "threads/interrupt.h"
+#include "threads/malloc.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
 
@@ -24,6 +25,11 @@ static int64_t ticks;
    Initialized by timer_calibrate(). */
 static unsigned loops_per_tick;
 struct list sleeping_threads_list;
+/* sleeping_thread structs whose sleep finished are parked here by
+   check_sleep_timeout() (interrupt context) and freed from
+   timer_sleep() (thread context): the kernel allocator takes a lock,
+   which is illegal in interrupt context. */
+static struct list deferred_free_list;
 struct sleeping_thread {
   struct thread* t;
   int tick;
@@ -31,6 +37,7 @@ struct sleeping_thread {
   struct list_elem elem;
 };
 static intr_handler_func timer_interrupt;
+void check_sleep_timeout(void);
 static bool too_many_loops(unsigned loops);
 static void busy_wait(int64_t loops);
 static void real_time_sleep(int64_t num, int32_t denom);
@@ -42,6 +49,7 @@ void timer_init(void) {
   pit_configure_channel(0, 2, TIMER_FREQ);
   intr_register_ext(0x20, timer_interrupt, "8254 Timer");
   list_init(&sleeping_threads_list);
+  list_init(&deferred_free_list);
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -85,6 +93,11 @@ int64_t timer_elapsed(int64_t then) { return timer_ticks() - then; }
 void timer_sleep(
     int64_t ticks) { //put the thread to the sleep list, at each timer interrupt, check and schedule
   intr_disable();
+  while (!list_empty(&deferred_free_list)) {
+    struct sleeping_thread* s_t =
+        list_entry(list_pop_front(&deferred_free_list), struct sleeping_thread, elem);
+    free(s_t);
+  }
   int64_t start = timer_ticks();
   struct sleeping_thread* s_t = malloc(sizeof(struct sleeping_thread));
   s_t->t = thread_current();
@@ -153,6 +166,7 @@ void check_sleep_timeout() {
     if (ticks - s_t->start_tick >= s_t->tick) {
       thread_wake(s_t->t);
       head = list_remove(head);
+      list_push_back(&deferred_free_list, &s_t->elem);
       continue;
     }
     head = list_next(head);
@@ -217,3 +231,4 @@ static void real_time_delay(int64_t num, int32_t denom) {
   ASSERT(denom % 1000 == 0);
   busy_wait(loops_per_tick * num / 1000 * TIMER_FREQ / (denom / 1000));
 }
+int64_t get_now_time_in_ms() { return ticks * 1000 / TIMER_FREQ; }
