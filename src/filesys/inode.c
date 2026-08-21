@@ -10,6 +10,7 @@
 #include "filesys/buffer_cache.h"
 /* Identifies an inode. */
 #define INODE_MAGIC 0x494e4f44
+#define INODE_SECTOR_NODE_MAGIC 0x11451419
 #define INODE_FIRST_LAYER_NODES 125
 #define INODE_SECOND_LAYER_NODES 127
 /* On-disk inode.
@@ -27,8 +28,10 @@ struct inode_node_disk {
 /* Returns the number of sectors to allocate for an inode SIZE
    bytes long. */
 static inline size_t bytes_to_sectors(off_t size) { return DIV_ROUND_UP(size, BLOCK_SECTOR_SIZE); }
+
+/*return how many sector nodes is needed*/
 static inline size_t bytes_to_sector_nodes(off_t size) {
-  return DIV_ROUND_UP(size, BLOCK_SECTOR_SIZE) / INODE_FIRST_LAYER_NODES;
+  return DIV_ROUND_UP(DIV_ROUND_UP(size, BLOCK_SECTOR_SIZE), INODE_FIRST_LAYER_NODES);
 }
 /* In-memory inode. */
 struct inode {
@@ -47,9 +50,14 @@ struct inode {
    POS. */
 static block_sector_t byte_to_sector(const struct inode* inode, off_t pos) {
   ASSERT(inode != NULL);
-  if (pos < inode->data.length)
-    return inode->data.sectors[pos / BLOCK_SECTOR_SIZE];
-  else
+  if (pos < inode->data.length) {
+    block_sector_t node_sector = (pos / BLOCK_SECTOR_SIZE) / INODE_SECOND_LAYER_NODES;
+    struct inode_node_disk* sector_node = malloc(BLOCK_SECTOR_SIZE);
+    buffer_read(fs_device, inode->data.sectors[node_sector], sector_node, BLOCK_SECTOR_SIZE, 0);
+    block_sector_t res = sector_node->sectors[pos / BLOCK_SECTOR_SIZE % INODE_SECOND_LAYER_NODES];
+    free(sector_node);
+    return res;
+  } else
     return -1;
 }
 
@@ -70,6 +78,7 @@ void inode_init(void) {
    Returns false if memory or disk allocation fails. */
 bool inode_create(block_sector_t sector, off_t length) {
   struct inode_disk* disk_inode = NULL;
+  struct inode_node_disk* node_disk = calloc(1, BLOCK_SECTOR_SIZE);
   bool success = false;
 
   ASSERT(length >= 0);
@@ -81,49 +90,119 @@ bool inode_create(block_sector_t sector, off_t length) {
   disk_inode = calloc(1, sizeof *disk_inode);
   if (disk_inode != NULL) {
     size_t sectors = bytes_to_sectors(length);
-    if (sectors > 125) {
+
+    size_t nodes = DIV_ROUND_UP(sectors, INODE_SECOND_LAYER_NODES); //how many nodes are needed
+
+    if (sectors > 125 * 127) {
       return false;
     }
     disk_inode->length = length;
-    if (free_map_allocate(sectors, &disk_inode->start)) {
-      disk_inode->magic = INODE_MAGIC;
-
-      if (sectors > 0) {
+    uint32_t node_first = 0;
+    if (nodes > 0) {
+      if (free_map_allocate(nodes, &node_first)) { //allocate the nodes
+        node_disk->magic = INODE_SECTOR_NODE_MAGIC;
         static char zeros[BLOCK_SECTOR_SIZE];
-        size_t i;
-
-        for (i = 0; i < sectors; i++) {
-          disk_inode->sectors[i] = disk_inode->start + i;
+        for (int i = 0; i < nodes; ++i) {
+          disk_inode->sectors[i] = node_first + i;
           buffer_write(fs_device, disk_inode->sectors[i], zeros, BLOCK_SECTOR_SIZE, 0);
         }
+      } else {
+        node_disk->magic = INODE_SECTOR_NODE_MAGIC;
+        static char zeros[BLOCK_SECTOR_SIZE];
+        size_t allocated = 0;
+        size_t remains = nodes;
+        size_t alloc_try = nodes / 2;
+
+        while (allocated != nodes) {
+          if (free_map_allocate(alloc_try, &node_first)) {
+            for (int i = 0; i < alloc_try; ++i) {
+              disk_inode->sectors[allocated + i] = node_first + i;
+              buffer_write(fs_device, disk_inode->sectors[i + allocated], zeros, BLOCK_SECTOR_SIZE,
+                           0);
+            }
+            allocated += alloc_try;
+            alloc_try = alloc_try < nodes - allocated ? alloc_try : nodes - allocated;
+          } else {
+            alloc_try /= 2;
+            if (alloc_try == 0) { //also handle
+
+              return false;
+            }
+          }
+        }
+      }
+    }
+    free(node_disk);
+    if (sectors > 0) {
+      if (free_map_allocate(sectors, &disk_inode->start)) {
+        disk_inode->magic = INODE_MAGIC;
+
+        static char zeros[BLOCK_SECTOR_SIZE];
+        size_t i;
+        struct inode_node_disk* node = malloc(BLOCK_SECTOR_SIZE);
+        int node_curr = 0;
+        buffer_read(fs_device, disk_inode->sectors[node_curr], node, BLOCK_SECTOR_SIZE,
+                    0); //we always start at 0.
+        for (i = 0; i < sectors; i++) {
+          if (node_curr != i / INODE_SECOND_LAYER_NODES) {
+            buffer_write(fs_device, disk_inode->sectors[node_curr], node, BLOCK_SECTOR_SIZE, 0);
+            node_curr++;
+
+            buffer_read(fs_device, disk_inode->sectors[node_curr], node, BLOCK_SECTOR_SIZE, 0);
+          }
+          node->sectors[i - node_curr * INODE_SECOND_LAYER_NODES] = disk_inode->start + i;
+          buffer_write(fs_device, node->sectors[i - node_curr * INODE_SECOND_LAYER_NODES], zeros,
+                       BLOCK_SECTOR_SIZE, 0);
+        }
+        buffer_write(fs_device, disk_inode->sectors[node_curr], node, BLOCK_SECTOR_SIZE, 0);
+        free(node);
       }
       {
         buffer_write(fs_device, sector, disk_inode, BLOCK_SECTOR_SIZE, 0);
       }
+
       success = true;
     } else {
       disk_inode->magic = INODE_MAGIC;
 
-      {
+      { //remove?
         buffer_write(fs_device, sector, disk_inode, BLOCK_SECTOR_SIZE, 0);
       }
       static char zeros[BLOCK_SECTOR_SIZE];
       size_t allocated = 0;
       size_t remains = sectors;
       size_t alloc_try = remains / 2;
-      while (allocated != sectors) {
-        uint32_t first_sector = 0;
-        if (free_map_allocate(alloc_try, &first_sector)) {
-          for (int i = allocated; i < alloc_try + allocated; ++i) {
-            disk_inode->sectors[i] = first_sector + i - allocated;
-            buffer_write(fs_device, disk_inode->sectors[i], zeros, BLOCK_SECTOR_SIZE, 0);
-          }
-          allocated += alloc_try;
-        } else {
-          alloc_try /= 2;
-          if (alloc_try == 0) { //TODO: add space recycle here
-            // return false;
-            alloc_try = 1;
+
+      struct inode_node_disk* node = malloc(BLOCK_SECTOR_SIZE);
+      int node_curr = 0;
+      buffer_read(fs_device, disk_inode->sectors[node_curr], node, BLOCK_SECTOR_SIZE,
+                  0); //we always start at 0.
+      if (sectors > 0) {
+        while (allocated != sectors) {
+          uint32_t first_sector = 0;
+
+          if (free_map_allocate(alloc_try, &first_sector)) {
+            for (int i = allocated; i < alloc_try + allocated; ++i) {
+              if (node_curr != i / INODE_SECOND_LAYER_NODES) {
+                buffer_write(fs_device, disk_inode->sectors[node_curr], node, BLOCK_SECTOR_SIZE, 0);
+                node_curr++;
+                buffer_read(fs_device, disk_inode->sectors[node_curr], node, BLOCK_SECTOR_SIZE, 0);
+              }
+              node->sectors[i - node_curr * INODE_SECOND_LAYER_NODES] =
+                  first_sector + i - allocated;
+              buffer_write(fs_device, node->sectors[i - node_curr * INODE_SECOND_LAYER_NODES],
+                           zeros, BLOCK_SECTOR_SIZE, 0);
+            }
+            buffer_write(fs_device, disk_inode->sectors[node_curr], node, BLOCK_SECTOR_SIZE, 0);
+            allocated += alloc_try;
+            alloc_try = alloc_try < sectors - allocated ? alloc_try : sectors - allocated;
+          } else {
+            alloc_try /= 2;
+            if (alloc_try == 0) { //TODO: add space recycle here
+              free(node);
+              return false;
+              // alloc_try = 1;
+            }
           }
         }
       }
@@ -132,6 +211,7 @@ bool inode_create(block_sector_t sector, off_t length) {
         buffer_write(fs_device, sector, disk_inode, BLOCK_SECTOR_SIZE, 0);
       }
       success = true;
+      free(node);
     }
     free(disk_inode);
   }
@@ -198,27 +278,35 @@ void inode_close(struct inode* inode) {
   if (inode == NULL)
     return;
 
-  lock_acquire(&open_inodes_lock);
-
   /* Release resources if this was the last opener. */
   if (--inode->open_cnt == 0) {
     /* Remove from inode list and release lock. */
+    lock_acquire(&open_inodes_lock);
     list_remove(&inode->elem);
     lock_release(&open_inodes_lock);
     /* Deallocate blocks if removed. */
     if (inode->removed) {
       free_map_release(inode->sector, 1);
-      for (int i = 0; i < bytes_to_sectors(inode->data.length); ++i) {
-        free_map_release(inode->data.sectors[i], 1);
-      }
-    }
+      int nodes_cnt = DIV_ROUND_UP(DIV_ROUND_UP(inode->data.length, BLOCK_SECTOR_SIZE),
+                                   INODE_SECOND_LAYER_NODES);
+      int sector_cnt = bytes_to_sectors(inode->data.length);
+      struct inode_node_disk* node = malloc(BLOCK_SECTOR_SIZE);
+      for (int i = 0; i < nodes_cnt; ++i) {
 
-    free(inode);
-  } else {
-    lock_release(&open_inodes_lock);
+        buffer_read(fs_device, inode->data.sectors[i], node, BLOCK_SECTOR_SIZE, 0);
+        for (int j = 0; j < (INODE_SECOND_LAYER_NODES > sector_cnt - i * INODE_FIRST_LAYER_NODES
+                                 ? INODE_FIRST_LAYER_NODES
+                                 : sector_cnt - i * INODE_SECOND_LAYER_NODES);
+             ++j) {
+
+          free_map_release(node->sectors[i], 1);
+        }
+      }
+      free(node);
+      free(inode);
+    }
   }
 }
-
 /* Marks INODE to be deleted when it is closed by the last caller who
    has it open. */
 void inode_remove(struct inode* inode) {
