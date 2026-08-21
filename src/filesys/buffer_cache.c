@@ -5,7 +5,8 @@ struct list buffer_records;
 
 void page_buffer_init() { list_init(&buffer_records); }
 // struct buffer_page* register_page(block_sector_t sector) {}
-bool buffer_read(struct block* blk, block_sector_t sector, void* buffer) {
+bool buffer_read(struct block* blk, block_sector_t sector, void* buffer, size_t size,
+                 int offset) {
   struct sector_elem* se = check_exist(sector, &buffer_records);
 
   if (se == NULL) { //not in buffer
@@ -26,11 +27,13 @@ bool buffer_read(struct block* blk, block_sector_t sector, void* buffer) {
   }
   record_access(se, &buffer_records);
   rw_lock_acquire(&se->buffer->lk, true);
-  memcpy(buffer, se->buffer->data, BLOCK_SECTOR_SIZE);
+  memcpy(buffer, se->buffer->data + offset, size);
   rw_lock_release(&se->buffer->lk, true);
   return true;
 }
-bool buffer_write(struct block* blk, block_sector_t sector, void* buffer) {
+
+bool buffer_write(struct block* blk, block_sector_t sector, void* buffer, size_t size,
+                  int offset) {
   struct sector_elem* se = check_exist(sector, &buffer_records);
   if (se == NULL) { //not in buffer
     se = malloc(sizeof(struct sector_elem));
@@ -50,7 +53,7 @@ bool buffer_write(struct block* blk, block_sector_t sector, void* buffer) {
   }
   record_access(se, &buffer_records);
   rw_lock_acquire(&se->buffer->lk, false);
-  memcpy(se->buffer->data, buffer, BLOCK_SECTOR_SIZE);
+  memcpy(se->buffer->data + offset, buffer, size);
   rw_lock_release(&se->buffer->lk, false);
   return true;
 }
