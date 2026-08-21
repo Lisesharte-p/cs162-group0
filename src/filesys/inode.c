@@ -10,20 +10,26 @@
 #include "filesys/buffer_cache.h"
 /* Identifies an inode. */
 #define INODE_MAGIC 0x494e4f44
-
+#define INODE_FIRST_LAYER_NODES 125
+#define INODE_SECOND_LAYER_NODES 127
 /* On-disk inode.
    Must be exactly BLOCK_SECTOR_SIZE bytes long. */
 struct inode_disk {
-  block_sector_t start; /* First data sector. */
-  off_t length;         /* File size in bytes. */
-  unsigned magic;       /* Magic number. */
-  uint32_t unused[125]; /* Not used. */
+  block_sector_t start;                            /* First data sector. */
+  off_t length;                                    /* File size in bytes. */
+  unsigned magic;                                  /* Magic number. */
+  block_sector_t sectors[INODE_FIRST_LAYER_NODES]; /* data sectors, max 125*512 bytes */
 };
-
+struct inode_node_disk {
+  unsigned magic;
+  block_sector_t sectors[INODE_SECOND_LAYER_NODES];
+};
 /* Returns the number of sectors to allocate for an inode SIZE
    bytes long. */
 static inline size_t bytes_to_sectors(off_t size) { return DIV_ROUND_UP(size, BLOCK_SECTOR_SIZE); }
-
+static inline size_t bytes_to_sector_nodes(off_t size) {
+  return DIV_ROUND_UP(size, BLOCK_SECTOR_SIZE) / INODE_FIRST_LAYER_NODES;
+}
 /* In-memory inode. */
 struct inode {
   struct list_elem elem;  /* Element in inode list. */
@@ -42,7 +48,7 @@ struct inode {
 static block_sector_t byte_to_sector(const struct inode* inode, off_t pos) {
   ASSERT(inode != NULL);
   if (pos < inode->data.length)
-    return inode->data.start + pos / BLOCK_SECTOR_SIZE;
+    return inode->data.sectors[pos / BLOCK_SECTOR_SIZE];
   else
     return -1;
 }
@@ -75,19 +81,55 @@ bool inode_create(block_sector_t sector, off_t length) {
   disk_inode = calloc(1, sizeof *disk_inode);
   if (disk_inode != NULL) {
     size_t sectors = bytes_to_sectors(length);
+    if (sectors > 125) {
+      return false;
+    }
     disk_inode->length = length;
-    disk_inode->magic = INODE_MAGIC;
     if (free_map_allocate(sectors, &disk_inode->start)) {
-      {
-        buffer_write(fs_device, sector, disk_inode, BLOCK_SECTOR_SIZE, 0);
-      }
+      disk_inode->magic = INODE_MAGIC;
+
       if (sectors > 0) {
         static char zeros[BLOCK_SECTOR_SIZE];
         size_t i;
 
         for (i = 0; i < sectors; i++) {
-          buffer_write(fs_device, disk_inode->start + i, zeros, BLOCK_SECTOR_SIZE, 0);
+          disk_inode->sectors[i] = disk_inode->start + i;
+          buffer_write(fs_device, disk_inode->sectors[i], zeros, BLOCK_SECTOR_SIZE, 0);
         }
+      }
+      {
+        buffer_write(fs_device, sector, disk_inode, BLOCK_SECTOR_SIZE, 0);
+      }
+      success = true;
+    } else {
+      disk_inode->magic = INODE_MAGIC;
+
+      {
+        buffer_write(fs_device, sector, disk_inode, BLOCK_SECTOR_SIZE, 0);
+      }
+      static char zeros[BLOCK_SECTOR_SIZE];
+      size_t allocated = 0;
+      size_t remains = sectors;
+      size_t alloc_try = remains / 2;
+      while (allocated != sectors) {
+        uint32_t first_sector = 0;
+        if (free_map_allocate(alloc_try, &first_sector)) {
+          for (int i = allocated; i < alloc_try + allocated; ++i) {
+            disk_inode->sectors[i] = first_sector + i - allocated;
+            buffer_write(fs_device, disk_inode->sectors[i], zeros, BLOCK_SECTOR_SIZE, 0);
+          }
+          allocated += alloc_try;
+        } else {
+          alloc_try /= 2;
+          if (alloc_try == 0) { //TODO: add space recycle here
+            // return false;
+            alloc_try = 1;
+          }
+        }
+      }
+
+      {
+        buffer_write(fs_device, sector, disk_inode, BLOCK_SECTOR_SIZE, 0);
       }
       success = true;
     }
@@ -166,7 +208,9 @@ void inode_close(struct inode* inode) {
     /* Deallocate blocks if removed. */
     if (inode->removed) {
       free_map_release(inode->sector, 1);
-      free_map_release(inode->data.start, bytes_to_sectors(inode->data.length));
+      for (int i = 0; i < bytes_to_sectors(inode->data.length); ++i) {
+        free_map_release(inode->data.sectors[i], 1);
+      }
     }
 
     free(inode);
