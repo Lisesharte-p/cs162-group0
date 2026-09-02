@@ -283,3 +283,11 @@ cscope.po.out
 
 ### PintOS ###
 pintos/**/build
+
+### lecture resources ###
+Operating Systems Principles and Practice (Thomas.pdf
+Operating Systems Principles and Practice, Vol. .epub
+slides/download_slides.sh
+.gitignore
+slides
+src/examples/*

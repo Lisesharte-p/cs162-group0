@@ -3,16 +3,29 @@
 
 struct list buffer_records;
 
+//TODO!: we should use pre-allocated buffer region to avoid malloc failure
+
 void page_buffer_init() { list_init(&buffer_records); }
 // struct buffer_page* register_page(block_sector_t sector) {}
-bool buffer_read(struct block* blk, block_sector_t sector, void* buffer, size_t size,
-                 int offset) {
+bool buffer_read(struct block* blk, block_sector_t sector, void* buffer, size_t size, int offset) {
   struct sector_elem* se = check_exist(sector, &buffer_records);
 
   if (se == NULL) { //not in buffer
     se = malloc(sizeof(struct sector_elem));
+    if (!se) {
+      return false;
+    }
     struct buffer_page* bp = malloc(sizeof(struct buffer_page));
+    if (!bp) {
+      free(se);
+      return false;
+    }
     bp->data = malloc(BLOCK_SECTOR_SIZE);
+    if (!bp->data) {
+      free(se);
+      free(bp);
+      return false;
+    }
     rw_lock_init(&bp->lk);
     bp->sector = sector;
     se->buffer = bp;
@@ -32,13 +45,24 @@ bool buffer_read(struct block* blk, block_sector_t sector, void* buffer, size_t 
   return true;
 }
 
-bool buffer_write(struct block* blk, block_sector_t sector, void* buffer, size_t size,
-                  int offset) {
+bool buffer_write(struct block* blk, block_sector_t sector, void* buffer, size_t size, int offset) {
   struct sector_elem* se = check_exist(sector, &buffer_records);
   if (se == NULL) { //not in buffer
     se = malloc(sizeof(struct sector_elem));
+    if (!se) {
+      return false;
+    }
     struct buffer_page* bp = malloc(sizeof(struct buffer_page));
+    if (!bp) {
+      free(se);
+      return false;
+    }
     bp->data = malloc(BLOCK_SECTOR_SIZE);
+    if (!bp->data) {
+      free(se);
+      free(bp);
+      return false;
+    }
     rw_lock_init(&bp->lk);
     bp->sector = sector;
     se->buffer = bp;

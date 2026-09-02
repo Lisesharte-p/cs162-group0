@@ -3,6 +3,7 @@
 
 #include "filesys/replacer.h"
 #include "filesys/filesys.h"
+#include "bitmap.h"
 
 void page_buffer_init();
 bool buffer_read(struct block* blk, block_sector_t sector, void* buffer, size_t size, int offset);
