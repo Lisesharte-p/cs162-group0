@@ -7,6 +7,7 @@
 #include "lib/kernel/list.h"
 #include "threads/synch.h"
 #include "threads/malloc.h"
+#include "bitmap.h"
 //we use LRU here, a list would be enough.
 #define BUFFER_SIZE 64
 struct buffer_page {
@@ -17,11 +18,12 @@ struct buffer_page {
 struct sector_elem {
   block_sector_t sector;
   struct list_elem elem;
-  bool visited;//for clock algorithm
+  bool visited; //for clock algorithm
   struct buffer_page* buffer;
 };
-struct sector_elem* check_exist(block_sector_t sector, struct list* records);
-struct sector_elem* evict(struct list* records);
-bool record_access(struct sector_elem* se, struct list* records);
+int check_exist(block_sector_t sector, struct bitmap* records, block_sector_t* sector_array);
+int evict(struct bitmap* records, bool* visited, size_t* now_evict, bool* in_use);
+int record_access(block_sector_t se, struct bitmap* records, block_sector_t* sector_array,
+                   bool* visited);
 
 #endif

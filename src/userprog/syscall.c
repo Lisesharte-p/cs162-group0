@@ -414,8 +414,12 @@ pid_t exec_(const char* cmd_line) {
   }
   bundle->parent_tid = thread_current()->pcb->main_pid;
   strlcpy(bundle->file_name, cmd_line, strlen(cmd_line) + 1);
-  thread_create(cmd_line, PRI_DEFAULT, start_process, (void*)bundle);
-
+  pid_t id=thread_create(cmd_line, PRI_DEFAULT, start_process, (void*)bundle);
+  if(id==TID_ERROR){
+    palloc_free_page(bundle->file_name);
+    free(bundle);
+    return -1;
+  }
   sema_down(&sync_sig);
   bool success = bundle->success;
   pid_t child_pid = bundle->child_pid;

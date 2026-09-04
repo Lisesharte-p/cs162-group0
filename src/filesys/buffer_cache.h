@@ -8,6 +8,6 @@
 void page_buffer_init();
 bool buffer_read(struct block* blk, block_sector_t sector, void* buffer, size_t size, int offset);
 bool buffer_write(struct block* blk, block_sector_t sector, void* buffer, size_t size, int offset);
-bool write_back(struct buffer_page* page, struct block* blk);
-void write_all();
+bool write_back(struct block* blk, block_sector_t sector, void* buffer);
+void write_all(struct block* blk);
 #endif

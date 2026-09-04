@@ -1,31 +1,50 @@
 #include "filesys/replacer.h"
-
-struct sector_elem* check_exist(block_sector_t sector, struct list* records) {
-  struct list_elem* head = list_begin(records);
-  struct list_elem* tail = list_end(records);
-  while (head != tail) {
-    struct sector_elem* se = list_entry(head, struct sector_elem, elem);
-    if (se->sector == sector) {
-      return se;
+#include "devices/timer.h"
+#include "stdio.h"
+int check_exist(block_sector_t sector, struct bitmap* records, block_sector_t* sector_array) {
+  int idx = 0;
+  while(idx<BUFFER_SIZE){
+    if(sector_array[idx]==sector){
+      return bitmap_test(records, idx)?idx:-1;
     }
-    head = list_next(head);
+    ++idx;
   }
-  return NULL;
+  return -1;
 }
 
-struct sector_elem* evict(struct list* records) { //should consider page in use
-  if (list_empty(records)) {
-    return NULL;
+int evict(struct bitmap* records,bool* visited,size_t* now_evict,bool* in_use) { //should consider page in use, sleep if all pages in use
+  int i = 0;
+  int trys = 0;
+  while (++i) {
+    if(!visited[*now_evict]&&!in_use[*now_evict]){
+
+      return *now_evict;
+    } else {
+      if(trys>5){
+        printf("eviction failed");
+        return -1;
+      }
+      if(!i%BUFFER_SIZE){
+        trys++;
+
+      }
+      visited[*now_evict] = false;
+      *now_evict = *now_evict < BUFFER_SIZE-1 ? *now_evict+1 : 0;
+    }
   }
-  struct sector_elem* se = list_entry(list_back(records), struct sector_elem, elem);
-  list_remove(&se->elem);
-  return se;
 }
-bool record_access(struct sector_elem* se, struct list* records) {
-  if (check_exist(se->sector, records) == se) {
-    list_remove(&se->elem);
+
+int record_access(block_sector_t se, struct bitmap* records, block_sector_t* sector_array,bool* visited) {
+  int idx = check_exist(se, records, sector_array);
+  if (idx!=-1) {
+    visited[idx] = true;
+    return idx;
   }
 
-  list_push_front(records, &se->elem);
-  return true;
+  if(idx==BITMAP_ERROR){
+    return -1;
+  }
+  sector_array[idx] = se;
+  visited[idx] = true;
+  return idx;
 }

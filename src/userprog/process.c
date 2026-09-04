@@ -155,8 +155,7 @@ void start_process(void* file_name_) {
     list_init(&new_pcb->fd_list);
     list_init(&new_pcb->sema_list);
     list_init(&new_pcb->lock_list);
-    new_pcb->main_pid = allocate_pid();
-    bundle->child_pid = new_pcb->main_pid;
+    new_pcb->main_pid = TID_ERROR;
     new_pcb->exit_code = 0;
 
     new_pcb->thread_id_bitmap = bitmap_create_in_buf(MAX_THREADS, new_pcb->thread_id_bitmap_buf,
@@ -165,7 +164,6 @@ void start_process(void* file_name_) {
     t->id_in_process = bitmap_scan_and_flip(new_pcb->thread_id_bitmap, 1, 1, false);
     // Continue initializing the PCB as normal
     t->pcb->main_thread = t;
-    pid_pcb[new_pcb->main_pid] = new_pcb; //register process
     /* Extract the executable name (first token). */
     size_t fn_len = strlen(file_name);
     size_t pn_len = 0;
@@ -270,14 +268,18 @@ void start_process(void* file_name_) {
     *(void**)if_.esp = NULL;
   }
 faliure:
-  /* Handle failure with succesful PCB malloc. Must free the PCB */
+  /* A failed load was never visible to its parent, so tear it down locally. */
   if (!success && pcb_success) {
-    // Avoid race where PCB is freed before t->pcb is set to NULL
-    // If this happens, then an unfortuantely timed timer interrupt
-    // can try to activate the pagedir, but it is now freed memory
     bundle->success = 0;
     struct process* pcb_to_free = t->pcb;
     t->pcb = NULL;
+    pagedir_activate(NULL);
+    pagedir_destroy(pcb_to_free->pagedir);
+    if (t->exit_notifier != NULL) {
+      list_remove(&t->exit_notifier->elem);
+      free(t->exit_notifier);
+      t->exit_notifier = NULL;
+    }
     free(pcb_to_free);
   }
 
@@ -288,6 +290,12 @@ faliure:
     sema_up(bundle->sema);
     thread_exit();
   }
+
+  /* Publish only a fully initialized process. */
+  t->pcb->main_pid = allocate_pid();
+  ASSERT(t->pcb->main_pid != TID_ERROR);
+  bundle->child_pid = t->pcb->main_pid;
+  pid_pcb[t->pcb->main_pid] = t->pcb;
   if (bundle->sema) { //if someone is waiting for the exec, wake them up.
     sema_up(bundle->sema);
   }
@@ -631,8 +639,9 @@ bool load(const char* file_name, void (**eip)(void), void** esp) {
 
   /* Allocate and activate page directory. */
   t->pcb->pagedir = pagedir_create();
-  if (t->pcb->pagedir == NULL)
+  if (t->pcb->pagedir == NULL) {
     goto done;
+  }
   process_activate();
 
   /* 把 VGA 线性帧缓冲映射进用户地址空间,让 doom 这类程序
@@ -696,8 +705,9 @@ bool load(const char* file_name, void (**eip)(void), void** esp) {
             read_bytes = 0;
             zero_bytes = ROUND_UP(page_offset + phdr.p_memsz, PGSIZE);
           }
-          if (!load_segment(file, file_page, (void*)mem_page, read_bytes, zero_bytes, writable))
+          if (!load_segment(file, file_page, (void*)mem_page, read_bytes, zero_bytes, writable)) {
             goto done;
+          }
         } else
           goto done;
         break;
@@ -705,8 +715,9 @@ bool load(const char* file_name, void (**eip)(void), void** esp) {
   }
 
   /* Set up stack. */
-  if (!setup_stack(esp))
+  if (!setup_stack(esp)) {
     goto done;
+  }
 
   /* Start address. */
   *eip = (void (*)(void))ehdr.e_entry;
