@@ -7,7 +7,7 @@
 #include "threads/synch.h"
 #include "threads/fixed-point.h"
 #include "vaddr.h"
-
+#include "filesys/directory.h"
 #define STACK_LOWER (uint8_t*)PHYS_BASE - (1 << 23)
 /* States in a thread's life cycle. */
 enum thread_status {
@@ -113,6 +113,7 @@ struct thread {
   int init_priority; /* Base priority (set by user/creation). */
   struct lock*
       waiting_lock; /* Lock this thread is waiting to acquire (for chain donation), or NULL. */
+
 };
 struct lock_held {
   struct lock* lk;

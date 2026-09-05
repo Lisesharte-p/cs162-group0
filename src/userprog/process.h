@@ -49,6 +49,8 @@ struct process {
   int next_thread_num;
   unsigned long thread_id_bitmap_buf[32];
   struct bitmap* thread_id_bitmap;
+  char cwd[15];
+  char file_path[15];
 };
 
 struct file_descriptors {
@@ -72,6 +74,7 @@ struct process_start_bundle {
   bool success;
   tid_t parent_tid;
   pid_t child_pid;
+  char* cwd;
 };
 struct fork_bundle {
   struct semaphore fork_sema;
@@ -111,4 +114,5 @@ struct thread* get_thread_in_process(tid_t tid, struct process* p);
 void sema_close_list(struct list*);
 void lock_close_list(struct list*);
 bool extend_stack(void* fault_addr);
+bool add_file_descriptor(struct list* list_, struct file* file_, int fd);
 #endif /* userprog/process.h */

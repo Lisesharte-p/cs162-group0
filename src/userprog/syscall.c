@@ -129,7 +129,7 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     return;
   }
 
-  if (args[0] == SYS_OPEN) {
+  if (args[0] == SYS_OPEN) { //if file is the running executable, mark it deny write
     validate(args, 1);
     if (args[1] == STDOUT_FILENO || args[1] == STDIN_FILENO) {
       f->eax = -1;
@@ -143,18 +143,29 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
       f->eax = -1;
       return;
     }
-    strlcpy(file_name, (const char*)args[1], strlen((const char*)args[1]) + 1);
+
+    if (file_name[0] != '/') { //cat the cwd with file_name
+      strlcpy(file_name, thread_current()->pcb->cwd,
+              strlen((const char*)thread_current()->pcb->cwd) + 1);
+      int len = strlen((const char*)args[1]) + strlen((const char*)thread_current()->pcb->cwd);
+      strlcat(file_name, (const char*)args[1], len+1);
+    } else {
+      strlcpy(file_name, (const char*)args[1], strlen((const char*)args[1]) + 1);
+    }
+    // strlcpy(file_name, (const char*)args[1], strlen((const char*)args[1]) + 1);
+
     // printf("opening %s\n",file_name);
     struct file* file_new = filesys_open((char*)(file_name));
-    if (!file_new) {
-      // printf("open fail %s\n",file_name);
-      palloc_free_page(file_name);
-      f->eax = -1;
-      return;
-    }
-    if (strcmp(file_name, thread_current()->pcb->process_name) == 0) {
-      file_deny_write(file_new);
-    }
+
+
+    
+      if (!file_new) {
+        // printf("open fail %s\n",file_name);
+        palloc_free_page(file_name);
+        f->eax = -1;
+        return;
+      }
+
     struct list* file_list = &thread_current()->pcb->fd_list;
     int new_fd = thread_current()->pcb->next_fd;
     thread_current()->pcb->next_fd += 1;
@@ -230,7 +241,16 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     if (!args[1]) {
       exit_on_err();
     }
-    strlcpy(file_name, (const char*)args[1], strlen((const char*)args[1]) + 1);
+    //how can we validate the file name ("/\//?")
+
+    if(file_name[0]!='/'){//cat the cwd with file_name
+      strlcpy(file_name, thread_current()->pcb->cwd,
+              strlen((const char*)thread_current()->pcb->cwd) + 1);
+      int len = strlen((const char*)args[1]) + strlen((const char*)thread_current()->pcb->cwd);
+      strlcat(file_name, (const char*)args[1], len);
+    }else{
+      strlcpy(file_name, (const char*)args[1], strlen((const char*)args[1]) + 1);
+    }
     bool success = filesys_create(file_name, args[2]);
     f->eax = 1;
     palloc_free_page(file_name);
@@ -413,6 +433,9 @@ pid_t exec_(const char* cmd_line) {
     return -1;
   }
   bundle->parent_tid = thread_current()->pcb->main_pid;
+  bundle->cwd = malloc(15 * sizeof(char));
+  memcpy(bundle->cwd, thread_current()->pcb->cwd, strlen(thread_current()->pcb->cwd) + 1);
+
   strlcpy(bundle->file_name, cmd_line, strlen(cmd_line) + 1);
   pid_t id=thread_create(cmd_line, PRI_DEFAULT, start_process, (void*)bundle);
   if(id==TID_ERROR){
@@ -423,6 +446,7 @@ pid_t exec_(const char* cmd_line) {
   sema_down(&sync_sig);
   bool success = bundle->success;
   pid_t child_pid = bundle->child_pid;
+  free(bundle->cwd);
   palloc_free_page(bundle->file_name);
   free(bundle);
   if (!success) {
@@ -432,16 +456,7 @@ pid_t exec_(const char* cmd_line) {
   return child_pid;
 }
 
-bool add_file_descriptor(struct list* list_, struct file* file_, int fd) {
-  struct file_descriptors* new_fd_node = malloc(sizeof(struct file_descriptors));
-  if (!new_fd_node) {
-    return false;
-  }
-  new_fd_node->file_descriptor = file_;
-  new_fd_node->fd = fd;
-  list_push_back(list_, &new_fd_node->elem);
-  return true;
-}
+
 
 int close_file(struct list* list_, int fd) {
   struct list_elem* elem = list_find_file(list_, fd);

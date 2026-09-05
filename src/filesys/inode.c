@@ -431,7 +431,8 @@ off_t inode_write_at(struct inode* inode, const void* buffer_, off_t size,
       if (free_map_allocate(new_data_nodes - old_data_nodes, &start)) {
         int allocated = old_data_nodes;
         struct inode_disk_second_layer* node = malloc(BLOCK_SECTOR_SIZE);
-        while(allocated<new_data_nodes) {
+
+        while (allocated < new_data_nodes) {
           int node_idx = allocated / INODE_SECOND_LAYER_NODES;
           int data_idx = allocated % INODE_SECOND_LAYER_NODES;
           buffer_read(fs_device, inode->data.sectors[node_idx], node, BLOCK_SECTOR_SIZE, 0);

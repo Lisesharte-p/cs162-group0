@@ -12,6 +12,7 @@
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
+#include "filesys/inode.h"
 #include "threads/flags.h"
 #include "threads/init.h"
 #include "threads/interrupt.h"
@@ -95,6 +96,7 @@ pid_t process_execute(const char* file_name) {
   bundle->file_name = fn_copy;
   bundle->sema = load_sema;
   bundle->parent_tid = thread_current()->tid;
+  bundle->cwd = "/";
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create(file_name, PRI_DEFAULT, start_process, bundle);
   if (tid == TID_ERROR) {
@@ -147,6 +149,12 @@ void start_process(void* file_name_) {
     t->pcb = new_pcb;
     new_pcb->next_thread_num = 1;
     new_pcb->parent_pid = bundle->parent_tid;
+
+    memcpy(new_pcb->cwd, bundle->cwd, strlen(bundle->cwd) + 1);//the "\0"
+    memcpy(new_pcb->file_path, bundle->cwd, strlen(bundle->cwd) + 1);
+    int len = strlen(new_pcb->file_path) + strlen(bundle->file_name);
+
+
     //file lists
     sema_init(&(new_pcb->sema_exit), 0);
     new_pcb->next_fd = 2;
@@ -173,6 +181,7 @@ void start_process(void* file_name_) {
       pn_len = sizeof t->pcb->process_name - 1;
     memcpy(t->pcb->process_name, file_name, pn_len);
     t->pcb->process_name[pn_len] = '\0';
+    strlcat(new_pcb->file_path, t->pcb->process_name, len + 1);
   }
 
   /* Initialize interrupt frame and load executable. */
@@ -291,6 +300,13 @@ faliure:
     thread_exit();
   }
 
+
+  struct file* exe_file = filesys_open(new_pcb->file_path);
+  file_deny_write(exe_file);
+  int new_fd = new_pcb->next_fd;//should be 2
+  new_pcb->next_fd += 1;
+  add_file_descriptor(&new_pcb->fd_list, exe_file, new_fd);
+
   /* Publish only a fully initialized process. */
   t->pcb->main_pid = allocate_pid();
   ASSERT(t->pcb->main_pid != TID_ERROR);
@@ -338,6 +354,17 @@ int fork_start(void* bundle) { //fork a new process, should also modify the thre
   t->exit_notifier = elem;
   list_push_back(&t->pcb->thread_list, &elem->elem);
   process_activate();
+
+  struct list_elem* head = list_begin(&t->pcb->fd_list);
+  struct list_elem* tail = list_end(&t->pcb->fd_list);
+
+  while (head != tail) {
+    struct file_descriptors* fd = list_entry(head, struct file_descriptors, elem);
+    if (fd->fd == 2) {
+      file_deny_write(fd->file_descriptor); //deny write the exe_file
+      break;
+    }
+  }
 
   struct intr_frame* child_ = malloc(sizeof(struct intr_frame));
   if (!child_) {
@@ -387,6 +414,9 @@ void file_close_list(struct list* file_list) {
   }
   while (head != tail) {
     struct file_descriptors* fd = list_entry(head, struct file_descriptors, elem);
+    if(fd->fd==2){
+      file_allow_write(fd->file_descriptor);//allow write the exe_file
+    }
     head = list_next(head);
     list_remove(&fd->elem);
     if (fd->file_descriptor) {
@@ -470,6 +500,7 @@ void process_exit(void) {
   cur->pcb = NULL;
 
   sema_up(&pcb_to_free->sema_exit);
+  
   // free(pcb_to_free);
   // intr_set_level(old_level);
   thread_current()->pcb = NULL;
@@ -1191,4 +1222,14 @@ bool extend_stack(void* fault_addr) {
     }
   }
   return success;
+}
+bool add_file_descriptor(struct list* list_, struct file* file_, int fd) {
+  struct file_descriptors* new_fd_node = malloc(sizeof(struct file_descriptors));
+  if (!new_fd_node) {
+    return false;
+  }
+  new_fd_node->file_descriptor = file_;
+  new_fd_node->fd = fd;
+  list_push_back(list_, &new_fd_node->elem);
+  return true;
 }
