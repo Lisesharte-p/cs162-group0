@@ -18,10 +18,11 @@
 #include "threads/pte.h"
 #include "threads/palloc.h"
 #include "filesys/directory.h"
+#include "filesys/inode.h"
 static void syscall_handler(struct intr_frame*);
 struct list_elem* list_find_file(struct list* list_, int fd);
 void remove_file(struct list* list_, int fd);
-bool add_file_descriptor(struct list* list_, struct file* file_, int fd);
+
 static struct sema_descriptor* find_sema(int sid, struct process* pcb);
 static struct lock_descriptor* find_lock(int lid, struct process* pcb);
 void validate(uint32_t* args, int n);
@@ -175,7 +176,7 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     struct list* file_list = &thread_current()->pcb->fd_list;
     int new_fd = thread_current()->pcb->next_fd;
     thread_current()->pcb->next_fd += 1;
-    bool success = add_file_descriptor(file_list, file_new, new_fd);
+    bool success = add_file_descriptor(file_list, file_new, new_fd,file_new->is_dir);
     // printf("open success %d\n",new_fd);
     f->eax = new_fd;
     palloc_free_page(file_name);
@@ -392,7 +393,7 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
       return;
     }
     struct file_descriptors* file_ptr = list_entry(file_node, struct file_descriptors, elem);
-    f->eax = file_ptr->file_descriptor->is_dir;
+    f->eax = file_ptr->file_descriptor->is_dir&&file_ptr->dir;
     return;
   }
   if (args[0] == SYS_MKDIR) {
@@ -473,8 +474,36 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     return;
   }
   if (args[0] == SYS_READDIR) {
+    validate(args, 2);
+    struct list_elem* le = list_find_file(&thread_current()->pcb->fd_list,args[1]);
+    if(!le){
+      f->eax = 0;
+      return;
+    }
+    struct file_descriptors* fd = list_entry(le, struct file_descriptors, elem);
+    if(!fd->file_descriptor->is_dir||!fd->dir){
+      f->eax = 0;
+      return;
+    }
+
+    f->eax=dir_readdir(fd->dir,(char*)args[2]);
+    return;
   }
   if (args[0] == SYS_REMOVE) {
+  }
+  if (args[0] == SYS_INUMBER) {
+    validate(args, 1);
+
+    struct list_elem* elem = list_find_file(&thread_current()->pcb->fd_list, args[1]);
+    if (elem == NULL) {
+      f->eax = -1;
+      return;
+    }
+
+    struct file_descriptors* fd = list_entry(elem, struct file_descriptors, elem);
+
+    f->eax = inode_get_inumber(file_get_inode(fd->file_descriptor));
+    return;
   }
 }
 

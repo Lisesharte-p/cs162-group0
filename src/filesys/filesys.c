@@ -116,7 +116,9 @@ bool filesys_create(const char* name, off_t initial_size) {
    or if an internal memory allocation fails. */
 struct file* filesys_open(const char* name) { //parse file path?
   if(!strcmp(name,"/")){
-    return file_open(inode_open(ROOT_DIR_SECTOR));
+    struct file* res=file_open(inode_open(ROOT_DIR_SECTOR));
+    res->is_dir = true;
+    return res;
   }
   struct dir* dir = dir_open_root();
   

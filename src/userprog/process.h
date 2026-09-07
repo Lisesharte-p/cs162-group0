@@ -56,6 +56,7 @@ struct process {
 struct file_descriptors {
   struct list_elem elem;
   struct file* file_descriptor;
+  struct dir* dir;
   int fd;
 };
 struct sema_descriptor {
@@ -114,5 +115,5 @@ struct thread* get_thread_in_process(tid_t tid, struct process* p);
 void sema_close_list(struct list*);
 void lock_close_list(struct list*);
 bool extend_stack(void* fault_addr);
-bool add_file_descriptor(struct list* list_, struct file* file_, int fd);
+bool add_file_descriptor(struct list* list_, struct file* file_, int fd,bool is_dir);
 #endif /* userprog/process.h */

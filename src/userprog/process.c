@@ -303,7 +303,7 @@ faliure:
   file_deny_write(exe_file);
   int new_fd = new_pcb->next_fd; //should be 2
   new_pcb->next_fd += 1;
-  add_file_descriptor(&new_pcb->fd_list, exe_file, new_fd);
+  add_file_descriptor(&new_pcb->fd_list, exe_file, new_fd,false);
 
   /* Publish only a fully initialized process. */
   t->pcb->main_pid = allocate_pid();
@@ -1223,13 +1223,16 @@ bool extend_stack(void* fault_addr) {
   }
   return success;
 }
-bool add_file_descriptor(struct list* list_, struct file* file_, int fd) {
+bool add_file_descriptor(struct list* list_, struct file* file_, int fd,bool isdir) {
   struct file_descriptors* new_fd_node = malloc(sizeof(struct file_descriptors));
   if (!new_fd_node) {
     return false;
   }
   new_fd_node->file_descriptor = file_;
   new_fd_node->fd = fd;
+  if(isdir){
+    new_fd_node->dir = dir_open(file_->inode);
+  }
   list_push_back(list_, &new_fd_node->elem);
   return true;
 }
