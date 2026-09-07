@@ -17,6 +17,7 @@
 #include "threads/vaddr.h"
 #include "threads/pte.h"
 #include "threads/palloc.h"
+#include "filesys/directory.h"
 static void syscall_handler(struct intr_frame*);
 struct list_elem* list_find_file(struct list* list_, int fd);
 void remove_file(struct list* list_, int fd);
@@ -113,6 +114,10 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
       return;
     }
     struct file_descriptors* file_node = list_entry(list_elem_, struct file_descriptors, elem);
+    if (file_node->file_descriptor->is_dir) {
+      f->eax = -1;
+      return;
+    }
     char* buf = malloc(
         sizeof(char) *
         args[3]); //additional buffer, avoid filesys dead lock when user passed invalid pointer.
@@ -143,28 +148,29 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
       f->eax = -1;
       return;
     }
-
-    if (file_name[0] != '/') { //cat the cwd with file_name
+    if (strlen((const char*)args[1]) == 0) {
+      f->eax = -1;
+      return;
+    }
+    if (((const char*)args[1])[0] != '/') { //cat the cwd with file_name
       strlcpy(file_name, thread_current()->pcb->cwd,
               strlen((const char*)thread_current()->pcb->cwd) + 1);
       int len = strlen((const char*)args[1]) + strlen((const char*)thread_current()->pcb->cwd);
-      strlcat(file_name, (const char*)args[1], len+1);
+      strlcat(file_name, (const char*)args[1], len + 1);
     } else {
       strlcpy(file_name, (const char*)args[1], strlen((const char*)args[1]) + 1);
     }
     // strlcpy(file_name, (const char*)args[1], strlen((const char*)args[1]) + 1);
 
-    // printf("opening %s\n",file_name);
+    // printf("opening %s\n", file_name);
     struct file* file_new = filesys_open((char*)(file_name));
 
-
-    
-      if (!file_new) {
-        // printf("open fail %s\n",file_name);
-        palloc_free_page(file_name);
-        f->eax = -1;
-        return;
-      }
+    if (!file_new) {
+      // printf("open fail %s\n", file_name);
+      palloc_free_page(file_name);
+      f->eax = -1;
+      return;
+    }
 
     struct list* file_list = &thread_current()->pcb->fd_list;
     int new_fd = thread_current()->pcb->next_fd;
@@ -231,7 +237,7 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     return;
   }
 
-  if (args[0] == SYS_CREATE) {
+  if (args[0] == SYS_CREATE) { //return true or false
     validate(args, 2);
     char* file_name = palloc_get_page(0);
     if (!file_name) {
@@ -242,13 +248,16 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
       exit_on_err();
     }
     //how can we validate the file name ("/\//?")
-
-    if(file_name[0]!='/'){//cat the cwd with file_name
+    if (strlen((const char*)args[1]) == 0) {
+      f->eax = 0;
+      return;
+    }
+    if (((const char*)args[1])[0] != '/') { //cat the cwd with file_name
       strlcpy(file_name, thread_current()->pcb->cwd,
               strlen((const char*)thread_current()->pcb->cwd) + 1);
       int len = strlen((const char*)args[1]) + strlen((const char*)thread_current()->pcb->cwd);
-      strlcat(file_name, (const char*)args[1], len);
-    }else{
+      strlcat(file_name, (const char*)args[1], len + 1);
+    } else {
       strlcpy(file_name, (const char*)args[1], strlen((const char*)args[1]) + 1);
     }
     bool success = filesys_create(file_name, args[2]);
@@ -269,8 +278,11 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     struct file_descriptors* fd = list_entry(node, struct file_descriptors, elem);
 
     int file_len = file_length(fd->file_descriptor);
-    if (file_len < args[2]) { //a work for p2.
-      return;
+
+    if (file_len < args[2]) {
+      if (!file_extend(fd->file_descriptor, args[2])) {
+        return;
+      }
     }
 
     file_seek(fd->file_descriptor, args[2]);
@@ -340,14 +352,66 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     f->eax = 1;
     return;
   }
-  if (args[0] == SYS_CHDIR) {
+  if (args[0] == SYS_CHDIR) { //change cwd
+    validate(args, 1);
+    char* cwd = thread_current()->pcb->cwd;
+
+    int len = strlen((char*)args[1]) + strlen(cwd);
+    char* file_name;
+    if (((char*)args[1])[0] != '/') {
+      file_name = malloc((1 + len) * sizeof(char));
+      memcpy(file_name, cwd, strlen(cwd) + 1);
+      strlcat(file_name, (const char*)args[1], len + 1);
+    } else {
+      file_name = malloc((1 + strlen((char*)args[1])) * sizeof(char));
+      memcpy(file_name, (char*)args[1], strlen((char*)args[1]) + 1);
+    }
+    // printf("%s\n",file_name);
+    bool exist = isdir_(file_name);
+    if (!exist) {
+      f->eax = 0;
+      free(file_name);
+      return;
+    }
+    int path_len = strlen(file_name);
+    memcpy(cwd, file_name, path_len + 1); //add '/' at the back
+    strlcat(cwd, "/", path_len + 2);
+    free(file_name);
+    f->eax = 1;
+    return;
   }
   if (args[0] == SYS_GET_TID) {
     f->eax = thread_current()->tid;
   }
   if (args[0] == SYS_ISDIR) {
+    validate(args, 1);
+    struct list* list_ = &thread_current()->pcb->fd_list;
+    struct list_elem* file_node = list_find_file(list_, args[1]);
+    if (!file_node) {
+      f->eax = -1;
+      return;
+    }
+    struct file_descriptors* file_ptr = list_entry(file_node, struct file_descriptors, elem);
+    f->eax = file_ptr->file_descriptor->is_dir;
+    return;
   }
   if (args[0] == SYS_MKDIR) {
+    validate(args, 1);
+    char* cwd = thread_current()->pcb->cwd;
+    int len = strlen((char*)args[1]) + strlen(cwd);
+    char* file_name;
+    if (!((char*)args[1])[0] == '/') {
+      file_name = malloc((1 + len) * sizeof(char));
+      memcpy(file_name, cwd, strlen(cwd));
+      strlcat(file_name, (char*)args[1], len + 1);
+    } else {
+      file_name = malloc((1 + strlen((char*)args[1])) * sizeof(char));
+      memcpy(file_name, (char*)args[1], strlen((char*)args[1]) + 1);
+    }
+
+    f->eax = mkdir_(file_name);
+    free(file_name);
+    return;
   }
   if (args[0] == SYS_MMAP) {
   }
@@ -437,9 +501,10 @@ pid_t exec_(const char* cmd_line) {
   memcpy(bundle->cwd, thread_current()->pcb->cwd, strlen(thread_current()->pcb->cwd) + 1);
 
   strlcpy(bundle->file_name, cmd_line, strlen(cmd_line) + 1);
-  pid_t id=thread_create(cmd_line, PRI_DEFAULT, start_process, (void*)bundle);
-  if(id==TID_ERROR){
+  pid_t id = thread_create(cmd_line, PRI_DEFAULT, start_process, (void*)bundle);
+  if (id == TID_ERROR) {
     palloc_free_page(bundle->file_name);
+    free(bundle->cwd);
     free(bundle);
     return -1;
   }
@@ -455,8 +520,6 @@ pid_t exec_(const char* cmd_line) {
 
   return child_pid;
 }
-
-
 
 int close_file(struct list* list_, int fd) {
   struct list_elem* elem = list_find_file(list_, fd);
@@ -632,7 +695,8 @@ int fork_(struct intr_frame* f) { //reopen files, copy pagedir and set to COW
 
   sema_init(&bundle->fork_sema, 0);
   bundle->parent_pid = thread_current()->pcb->main_pid;
-  pid_t child_pid = thread_create(thread_current()->name, PRI_DEFAULT, (thread_func*)fork_start, (void*)bundle);
+  pid_t child_pid =
+      thread_create(thread_current()->name, PRI_DEFAULT, (thread_func*)fork_start, (void*)bundle);
 
   sema_down(&bundle->fork_sema);
 

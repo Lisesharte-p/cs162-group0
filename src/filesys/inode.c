@@ -413,60 +413,7 @@ off_t inode_write_at(struct inode* inode, const void* buffer_, off_t size,
   }
 
   if (inode->data.length < size + offset) { //need extend
-    size_t old_sec_nodes = bytes_to_sector_nodes(inode->data.length);
-    size_t old_data_nodes = bytes_to_sectors(inode->data.length);
-    int new_second_nodes = bytes_to_sector_nodes(size + offset);
-    int new_data_nodes = bytes_to_sectors(size + offset);
-
-    if (new_second_nodes > old_sec_nodes) { //need new second layer node
-      block_sector_t start;
-      if (free_map_allocate(new_second_nodes - old_sec_nodes, &start)) { //need write back?
-        for (int i = 0; i < new_second_nodes - old_sec_nodes; ++i) {
-          inode->data.sectors[old_sec_nodes + i] = start + i;
-        }
-
-      } else {
-        PANIC("unimplemented\n");
-      }
-      if (free_map_allocate(new_data_nodes - old_data_nodes, &start)) {
-        int allocated = old_data_nodes;
-        struct inode_disk_second_layer* node = malloc(BLOCK_SECTOR_SIZE);
-
-        while (allocated < new_data_nodes) {
-          int node_idx = allocated / INODE_SECOND_LAYER_NODES;
-          int data_idx = allocated % INODE_SECOND_LAYER_NODES;
-          buffer_read(fs_device, inode->data.sectors[node_idx], node, BLOCK_SECTOR_SIZE, 0);
-          int sector_remain = INODE_SECOND_LAYER_NODES - data_idx;
-          int all_remain = new_data_nodes - allocated;
-          int remain = sector_remain < all_remain ? sector_remain : all_remain;
-
-          for (int j = 0; j < remain; ++j) {
-            node->sectors[data_idx + j] = start++;
-          }
-          allocated += remain;
-          buffer_write(fs_device, inode->data.sectors[node_idx], node, BLOCK_SECTOR_SIZE, 0);
-        }
-        ASSERT(allocated == new_data_nodes);
-        free(node);
-      } else {
-        PANIC("unimplemented\n");
-      }
-    } else if (new_data_nodes > old_data_nodes) { //only need new data sector
-      block_sector_t start;
-      if (free_map_allocate(new_data_nodes - old_data_nodes, &start)) {
-        struct inode_disk_second_layer* node = malloc(BLOCK_SECTOR_SIZE);
-        buffer_read(fs_device, inode->data.sectors[old_sec_nodes - 1], node, BLOCK_SECTOR_SIZE, 0);
-        int sec_idx = old_data_nodes % INODE_SECOND_LAYER_NODES;
-        for (int i = 0; i < new_data_nodes - old_data_nodes; ++i) {
-          node->sectors[sec_idx + i] = start + i;
-        }
-        buffer_write(fs_device, inode->data.sectors[old_sec_nodes - 1], node, BLOCK_SECTOR_SIZE, 0);
-        free(node);
-      } else {
-      }
-    }
-    inode->data.length = size + offset;
-    buffer_write(fs_device, inode->sector, &inode->data, BLOCK_SECTOR_SIZE, 0);
+    inode_extend(inode, size + offset);
   }
 
   while (size > 0) {
@@ -527,4 +474,61 @@ off_t inode_length(const struct inode* inode) {
   off_t length = inode->data.length;
   lock_release(&((struct inode*)inode)->lock);
   return length;
+}
+
+bool inode_extend(struct inode* inode,size_t size){
+  size_t old_sec_nodes = bytes_to_sector_nodes(inode->data.length);
+  size_t old_data_nodes = bytes_to_sectors(inode->data.length);
+  int new_second_nodes = bytes_to_sector_nodes(size);
+  int new_data_nodes = bytes_to_sectors(size);
+
+  if (new_second_nodes > old_sec_nodes) { //need new second layer node
+    block_sector_t start;
+    if (free_map_allocate(new_second_nodes - old_sec_nodes, &start)) { //need write back?
+      for (int i = 0; i < new_second_nodes - old_sec_nodes; ++i) {
+        inode->data.sectors[old_sec_nodes + i] = start + i;
+      }
+
+    } else {
+      PANIC("unimplemented\n");
+    }
+    if (free_map_allocate(new_data_nodes - old_data_nodes, &start)) {
+      int allocated = old_data_nodes;
+      struct inode_disk_second_layer* node = malloc(BLOCK_SECTOR_SIZE);
+
+      while (allocated < new_data_nodes) {
+        int node_idx = allocated / INODE_SECOND_LAYER_NODES;
+        int data_idx = allocated % INODE_SECOND_LAYER_NODES;
+        buffer_read(fs_device, inode->data.sectors[node_idx], node, BLOCK_SECTOR_SIZE, 0);
+        int sector_remain = INODE_SECOND_LAYER_NODES - data_idx;
+        int all_remain = new_data_nodes - allocated;
+        int remain = sector_remain < all_remain ? sector_remain : all_remain;
+
+        for (int j = 0; j < remain; ++j) {
+          node->sectors[data_idx + j] = start++;
+        }
+        allocated += remain;
+        buffer_write(fs_device, inode->data.sectors[node_idx], node, BLOCK_SECTOR_SIZE, 0);
+      }
+      ASSERT(allocated == new_data_nodes);
+      free(node);
+    } else {
+      PANIC("unimplemented\n");
+    }
+  } else if (new_data_nodes > old_data_nodes) { //only need new data sector
+    block_sector_t start;
+    if (free_map_allocate(new_data_nodes - old_data_nodes, &start)) {
+      struct inode_disk_second_layer* node = malloc(BLOCK_SECTOR_SIZE);
+      buffer_read(fs_device, inode->data.sectors[old_sec_nodes - 1], node, BLOCK_SECTOR_SIZE, 0);
+      int sec_idx = old_data_nodes % INODE_SECOND_LAYER_NODES;
+      for (int i = 0; i < new_data_nodes - old_data_nodes; ++i) {
+        node->sectors[sec_idx + i] = start + i;
+      }
+      buffer_write(fs_device, inode->data.sectors[old_sec_nodes - 1], node, BLOCK_SECTOR_SIZE, 0);
+      free(node);
+    } else {
+    }
+  }
+  inode->data.length = size;
+  buffer_write(fs_device, inode->sector, &inode->data, BLOCK_SECTOR_SIZE, 0);
 }

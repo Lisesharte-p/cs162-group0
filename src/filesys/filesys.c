@@ -40,21 +40,23 @@ void filesys_done(void) {
    Returns true if successful, false otherwise.
    Fails if a file named NAME already exists,
    or if internal memory allocation fails. */
-bool filesys_create(const char* name, off_t initial_size) { //if dir not exist, also create dir
+bool filesys_create(const char* name, off_t initial_size) { 
   block_sector_t inode_sector = 0;
 
   struct dir* dir = dir_open_root();
-  if(name[0]=='/')
-  {
+  if (name[0] == '/') {
     char *token, *save_ptr;
     int total_entity = 0;
-
-    for (token = strtok_r(name, "/", &save_ptr); token != NULL;
+    char* name_copy = malloc(sizeof(char) * (strlen(name) + 1));
+    memcpy(name_copy, name, sizeof(char) * (strlen(name) + 1));
+    for (token = strtok_r(name_copy, "/", &save_ptr); token != NULL;
          token = strtok_r(NULL, "/", &save_ptr)) {
       total_entity++;
     }
+    free(name_copy);
     if (total_entity == 0) {
-      return false;
+      dir_close(dir);
+      return NULL;
     }
     char** entity_v = malloc(total_entity * sizeof(char*));
     int i = 0;
@@ -70,28 +72,25 @@ bool filesys_create(const char* name, off_t initial_size) { //if dir not exist, 
         dir_lookup(dir, entity_v[j], &inode);
         if (inode != NULL) { //already exist
           dir_close(dir);
-          return false;
+          free(entity_v);
+          return NULL;
         }
         bool success = free_map_allocate(1, &inode_sector) &&
                        inode_create(inode_sector, initial_size) &&
-                       dir_add(dir, name, inode_sector, false);
+                       dir_add(dir, entity_v[j], inode_sector, false);
         if (!success && inode_sector != 0)
           free_map_release(inode_sector, 1);
         dir_close(dir);
         return success;
       }
       struct inode* inode = NULL;
-      dir_lookup(dir, entity_v[j], &inode);
-      if (inode == NULL) { //create new dir
-        block_sector_t sector;
-        if (!free_map_allocate(1, &sector)) {
+      bool is_dir=dir_lookup(dir, entity_v[j], &inode);
+      if (inode == NULL||!is_dir) {
+
           dir_close(dir);
-          return false;
-        }
-        dir_create(sector, MAX_ENTRIES);
-        dir_add(dir, entity_v[j], sector, true);
-        dir_close(dir);
-        dir_open(inode_open(sector));
+          free(entity_v);
+          return NULL;
+
       } else {
         dir_close(dir);
         dir_open(inode);
@@ -116,21 +115,26 @@ bool filesys_create(const char* name, off_t initial_size) { //if dir not exist, 
    Fails if no file named NAME exists,
    or if an internal memory allocation fails. */
 struct file* filesys_open(const char* name) { //parse file path?
-  if (!strcmp(name, "/")) {
+  if(!strcmp(name,"/")){
     return file_open(inode_open(ROOT_DIR_SECTOR));
   }
   struct dir* dir = dir_open_root();
+  
   struct inode* inode = NULL;
   if (name[0] == '/') {
     char *token, *save_ptr;
     int total_entity = 0;
+    char* name_copy = malloc(sizeof(char) * (strlen(name) + 1));
+    memcpy(name_copy, name, sizeof(char) * (strlen(name) + 1));
 
-    for (token = strtok_r(name, "/", &save_ptr); token != NULL;
+    for (token = strtok_r(name_copy, "/", &save_ptr); token != NULL;
          token = strtok_r(NULL, "/", &save_ptr)) {
       total_entity++;
     }
+    free(name_copy);
     if (total_entity == 0) {
-      return false;
+      dir_close(dir);
+      return NULL;
     }
     char** entity_v = malloc(total_entity * sizeof(char*));
     int i = 0;
@@ -144,36 +148,46 @@ struct file* filesys_open(const char* name) { //parse file path?
     for (int j = 0; j < total_entity; ++j) {
       if (j == total_entity - 1) {
         struct inode* inode = NULL;
-        dir_lookup(dir, entity_v[j], &inode);
+        bool is_dir=dir_lookup(dir, entity_v[j], &inode);
         if (inode != NULL) { //already exist
           dir_close(dir);
-          return file_open(inode);
+          free(entity_v);
+          struct file* res = file_open(inode);
+          if(!res){
+            return NULL;
+          }
+          res->is_dir = is_dir;
+          return res;
         }
-        return false; //not exist
+        dir_close(dir);
+        free(entity_v);
+        return NULL; //not exist
       }
       struct inode* inode = NULL;
-      dir_lookup(dir, entity_v[j], &inode);
-      if (inode == NULL) { //create new dir
-        block_sector_t sector;
-        if (!free_map_allocate(1, &sector)) {
-          return false;
-        }
-        dir_create(sector, MAX_ENTRIES);
-        dir_add(dir, entity_v[j], sector, true);
+      bool is_dir=dir_lookup(dir, entity_v[j], &inode);
+      if (inode == NULL||!is_dir) {
+
         dir_close(dir);
-        dir_open(inode_open(sector));
+        free(entity_v);
+        return NULL;
+
       } else {
         dir_close(dir);
         dir_open(inode);
       }
     }
   }
-
+  bool is_dir = false;
   if (dir != NULL)
-    dir_lookup(dir, name, &inode);
+    is_dir = dir_lookup(dir, name, &inode);
   dir_close(dir);
 
-  return file_open(inode);
+  struct file* res = file_open(inode);
+  if (!res) {
+    return NULL;
+  }
+  res->is_dir = is_dir;
+  return res;
 }
 
 /* Deletes the file named NAME.

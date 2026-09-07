@@ -2,9 +2,16 @@
 #define FILESYS_FILE_H
 
 #include "filesys/off_t.h"
-
+#include "stddef.h"
 struct inode;
-
+/* An open file. */
+struct file {
+  struct inode* inode; /* File's inode. */
+  off_t pos;           /* Current position. */
+  bool deny_write;     /* Has file_deny_write() been called? */
+  int ref_cnt;
+  bool is_dir;
+};
 /* Opening and closing files. */
 struct file* file_open(struct inode*);
 struct file* file_reopen(struct file*);
@@ -26,4 +33,5 @@ void file_seek(struct file*, off_t);
 off_t file_tell(struct file*);
 off_t file_length(struct file*);
 
+bool file_extend(struct file* file, size_t size);
 #endif /* filesys/file.h */

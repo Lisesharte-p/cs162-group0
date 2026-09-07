@@ -150,10 +150,9 @@ void start_process(void* file_name_) {
     new_pcb->next_thread_num = 1;
     new_pcb->parent_pid = bundle->parent_tid;
 
-    memcpy(new_pcb->cwd, bundle->cwd, strlen(bundle->cwd) + 1);//the "\0"
+    memcpy(new_pcb->cwd, bundle->cwd, strlen(bundle->cwd) + 1); //the "\0"
     memcpy(new_pcb->file_path, bundle->cwd, strlen(bundle->cwd) + 1);
     int len = strlen(new_pcb->file_path) + strlen(bundle->file_name);
-
 
     //file lists
     sema_init(&(new_pcb->sema_exit), 0);
@@ -300,10 +299,9 @@ faliure:
     thread_exit();
   }
 
-
   struct file* exe_file = filesys_open(new_pcb->file_path);
   file_deny_write(exe_file);
-  int new_fd = new_pcb->next_fd;//should be 2
+  int new_fd = new_pcb->next_fd; //should be 2
   new_pcb->next_fd += 1;
   add_file_descriptor(&new_pcb->fd_list, exe_file, new_fd);
 
@@ -414,11 +412,12 @@ void file_close_list(struct list* file_list) {
   }
   while (head != tail) {
     struct file_descriptors* fd = list_entry(head, struct file_descriptors, elem);
-    if(fd->fd==2){
-      file_allow_write(fd->file_descriptor);//allow write the exe_file
-    }
+    // if(fd->fd==2){
+    //   file_allow_write(fd->file_descriptor);//allow write the exe_file
+    // }
     head = list_next(head);
     list_remove(&fd->elem);
+    // printf("close fd %d\n", fd->fd);
     if (fd->file_descriptor) {
       file_close(fd->file_descriptor);
     }
@@ -489,6 +488,7 @@ void process_exit(void) {
      If this happens, then an unfortuantely timed timer interrupt
      can try to activate the pagedir, but it is now freed memory */
   free_all_threads();
+  intr_set_level(old_level);
   struct process* pcb_to_free = cur->pcb;
   struct list* lock_list = &pcb_to_free->lock_list;
   lock_close_list(lock_list);
@@ -500,9 +500,9 @@ void process_exit(void) {
   cur->pcb = NULL;
 
   sema_up(&pcb_to_free->sema_exit);
-  
+
   // free(pcb_to_free);
-  // intr_set_level(old_level);
+
   thread_current()->pcb = NULL;
   thread_exit();
 }
