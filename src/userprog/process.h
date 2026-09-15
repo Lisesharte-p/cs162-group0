@@ -49,6 +49,7 @@ struct process {
   int next_thread_num;
   unsigned long thread_id_bitmap_buf[32];
   struct bitmap* thread_id_bitmap;
+  block_sector_t cwd_sector;
   char cwd[1024];
   char file_path[1024];
 };
@@ -76,6 +77,7 @@ struct process_start_bundle {
   tid_t parent_tid;
   pid_t child_pid;
   char* cwd;
+  block_sector_t cwd_sector;
 };
 struct fork_bundle {
   struct semaphore fork_sema;

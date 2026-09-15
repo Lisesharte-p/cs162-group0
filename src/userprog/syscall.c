@@ -153,21 +153,14 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
       f->eax = -1;
       return;
     }
-    if (((const char*)args[1])[0] != '/') { //cat the cwd with file_name
-      strlcpy(file_name, thread_current()->pcb->cwd,
-              strlen((const char*)thread_current()->pcb->cwd) + 1);
-      int len = strlen((const char*)args[1]) + strlen((const char*)thread_current()->pcb->cwd);
-      strlcat(file_name, (const char*)args[1], len + 1);
-    } else {
-      strlcpy(file_name, (const char*)args[1], strlen((const char*)args[1]) + 1);
-    }
-    // strlcpy(file_name, (const char*)args[1], strlen((const char*)args[1]) + 1);
 
-    // printf("opening %s\n", file_name);
+      strlcpy(file_name, (const char*)args[1], strlen((const char*)args[1]) + 1);
+  
+
     struct file* file_new = filesys_open((char*)(file_name));
 
     if (!file_new) {
-      // printf("open fail %s\n", file_name);
+ 
       palloc_free_page(file_name);
       f->eax = -1;
       return;
@@ -177,18 +170,18 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     int new_fd = thread_current()->pcb->next_fd;
     thread_current()->pcb->next_fd += 1;
     bool success = add_file_descriptor(file_list, file_new, new_fd,file_new->is_dir);
-    // printf("open success %d\n",new_fd);
+
     f->eax = new_fd;
     palloc_free_page(file_name);
     if (!success) {
       file_close(file_new);
       f->eax = -1;
     }
-    // printf("open\n");
+
     return;
   }
 
-  if (args[0] == SYS_CLOSE) { //bug here
+  if (args[0] == SYS_CLOSE) { 
     validate(args, 1);
     struct list* file_list = &thread_current()->pcb->fd_list;
     close_file(file_list, args[1]);
@@ -253,14 +246,9 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
       f->eax = 0;
       return;
     }
-    if (((const char*)args[1])[0] != '/') { //cat the cwd with file_name
-      strlcpy(file_name, thread_current()->pcb->cwd,
-              strlen((const char*)thread_current()->pcb->cwd) + 1);
-      int len = strlen((const char*)args[1]) + strlen((const char*)thread_current()->pcb->cwd);
-      strlcat(file_name, (const char*)args[1], len + 1);
-    } else {
+
       strlcpy(file_name, (const char*)args[1], strlen((const char*)args[1]) + 1);
-    }
+
     bool success = filesys_create(file_name, args[2]);
     f->eax = 1;
     palloc_free_page(file_name);
@@ -353,28 +341,25 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     f->eax = 1;
     return;
   }
-  if (args[0] == SYS_CHDIR) { //change cwd
+  if (args[0] == SYS_CHDIR) { //change cwd, may handle "../." in the future
     validate(args, 1);
     char* cwd = thread_current()->pcb->cwd;
 
     int len = strlen((char*)args[1]) + strlen(cwd);
     char* file_name;
-    if (((char*)args[1])[0] != '/') {
-      file_name = malloc((1 + len) * sizeof(char));
-      memcpy(file_name, cwd, strlen(cwd) + 1);
-      strlcat(file_name, (const char*)args[1], len + 1);
-    } else {
+
       file_name = malloc((1 + strlen((char*)args[1])) * sizeof(char));
       memcpy(file_name, (char*)args[1], strlen((char*)args[1]) + 1);
-    }
 
-    bool exist = isdir_(file_name);
+
+    bool exist = isdir_(file_name,&thread_current()->pcb->cwd_sector);
     if (!exist) {
 
       f->eax = 0;
       free(file_name);
       return;
     }
+
     int path_len = strlen(file_name);
     memcpy(cwd, file_name, path_len + 1); //add '/' at the back
     strlcat(cwd, "/", path_len + 2);
@@ -403,19 +388,12 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     char* cwd = thread_current()->pcb->cwd;
     int len = strlen((char*)args[1]) + strlen(cwd);
     char* file_name;
-    if (((char*)args[1])[0] != '/') {
-      file_name = malloc((1 + len) * sizeof(char));
-      memcpy(file_name, cwd, strlen(cwd)+1);
-      strlcat(file_name, (char*)args[1], len + 1);
-    } else {
+
       file_name = malloc((1 + strlen((char*)args[1])) * sizeof(char));
       memcpy(file_name, (char*)args[1], strlen((char*)args[1]) + 1);
-    }
+
 
     f->eax = mkdir_(file_name);
-    if(!f->eax){
-      printf("mkdir failed\n");
-    }
 
     free(file_name);
     return;
@@ -500,14 +478,10 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     char* cwd = thread_current()->pcb->cwd;
     int len = strlen((char*)args[1]) + strlen(cwd);
     char* file_name;
-    if (((char*)args[1])[0] != '/') {
-      file_name = malloc((1 + len) * sizeof(char));
-      memcpy(file_name, cwd, strlen(cwd)+1);
-      strlcat(file_name, (char*)args[1], len + 1);
-    } else {
-      file_name = malloc((1 + strlen((char*)args[1])) * sizeof(char));
-      memcpy(file_name, (char*)args[1], strlen((char*)args[1]) + 1);
-    }
+
+    file_name = malloc((1 + strlen((char*)args[1])) * sizeof(char));
+    memcpy(file_name, (char*)args[1], strlen((char*)args[1]) + 1);
+
 
     f->eax = filesys_remove(file_name);
     free(file_name);
@@ -549,6 +523,7 @@ pid_t exec_(const char* cmd_line) {
   }
   bundle->parent_tid = thread_current()->pcb->main_pid;
   bundle->cwd = malloc(15 * sizeof(char));
+  bundle->cwd_sector = thread_current()->pcb->cwd_sector;
   memcpy(bundle->cwd, thread_current()->pcb->cwd, strlen(thread_current()->pcb->cwd) + 1);
 
   strlcpy(bundle->file_name, cmd_line, strlen(cmd_line) + 1);
@@ -644,9 +619,7 @@ bool fd_list_reopen(struct list* parent_list, struct list* child_list) {
     list_node->fd = file_ptr->fd;
 
     list_node->file_descriptor = file_reopen(file_ptr->file_descriptor);
-    // list_node->file_descriptor = file_ptr->file_descriptor;
-    // list_node->file_descriptor->ref_cnt++;
-    // inode_reopen(list_node->file_descriptor->inode);
+
     if (!list_node->file_descriptor) {
       free(list_node);
       return false;
@@ -686,7 +659,7 @@ int fork_(struct intr_frame* f) { //reopen files, copy pagedir and set to COW
   bundle->pd = pd_child;
   bundle->child_state = child_f;
   bundle->child_pcb = child_pcb;
-  // bundle->fd_list = &thread_current()->pcb->fd_list;
+
   bundle->success = false;
   memcpy(child_pcb, thread_current()->pcb, sizeof(struct process));
   child_pcb->parent_pid = thread_current()->tid;

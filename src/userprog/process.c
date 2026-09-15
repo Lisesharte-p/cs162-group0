@@ -51,6 +51,9 @@ void userprog_init(void) {
   t->pcb = calloc(sizeof(struct process), 1);
   success = t->pcb != NULL;
 
+  if (success)
+    t->pcb->cwd_sector = ROOT_DIR_SECTOR;
+
   /* Kill the kernel if we did not succeed */
   ASSERT(success);
 }
@@ -97,6 +100,7 @@ pid_t process_execute(const char* file_name) {
   bundle->sema = load_sema;
   bundle->parent_tid = thread_current()->tid;
   bundle->cwd = "/";
+  bundle->cwd_sector = ROOT_DIR_SECTOR;
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create(file_name, PRI_DEFAULT, start_process, bundle);
   if (tid == TID_ERROR) {
@@ -151,6 +155,7 @@ void start_process(void* file_name_) {
     new_pcb->parent_pid = bundle->parent_tid;
 
     memcpy(new_pcb->cwd, bundle->cwd, strlen(bundle->cwd) + 1); //the "\0"
+    new_pcb->cwd_sector = bundle->cwd_sector;
     memcpy(new_pcb->file_path, bundle->cwd, strlen(bundle->cwd) + 1);
     int len = strlen(new_pcb->file_path) + strlen(bundle->file_name);
 
@@ -180,7 +185,7 @@ void start_process(void* file_name_) {
       pn_len = sizeof t->pcb->process_name - 1;
     memcpy(t->pcb->process_name, file_name, pn_len);
     t->pcb->process_name[pn_len] = '\0';
-    strlcat(new_pcb->file_path, t->pcb->process_name, len + 1);
+    strlcat(new_pcb->file_path, t->pcb->process_name, len + 1);//TODO: refactor
   }
 
   /* Initialize interrupt frame and load executable. */

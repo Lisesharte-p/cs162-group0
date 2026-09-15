@@ -532,3 +532,5 @@ bool inode_extend(struct inode* inode,size_t size){
   inode->data.length = size;
   buffer_write(fs_device, inode->sector, &inode->data, BLOCK_SECTOR_SIZE, 0);
 }
+
+block_sector_t get_inode_sector(struct inode* inode) { return inode->sector; }

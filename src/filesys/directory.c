@@ -6,8 +6,9 @@
 #include "filesys/inode.h"
 #include "threads/malloc.h"
 #include "filesys/free-map.h"
+#include "threads/thread.h"
+#include "userprog/process.h"
 /* A directory. */
-
 
 /* A single directory entry. */
 struct dir_entry {
@@ -43,6 +44,83 @@ struct dir* dir_open(struct inode* inode) {
 /* Opens the root directory and returns a directory for it.
    Return true if successful, false on failure. */
 struct dir* dir_open_root(void) { return dir_open(inode_open(ROOT_DIR_SECTOR)); }
+
+struct dir* dir_open_cwd() { return dir_open(inode_open(thread_current()->pcb->cwd_sector)); }
+
+/* Opens the parent directory of PATH and copies its final component to NAME.
+   PATH is interpreted from the root directory, matching the filesystem's
+   existing path handling. */
+struct dir*
+dir_open_path(const char* path,
+              char** name) { //if starts with /, start from root, else we start from cwd.
+  struct dir* dir;
+  char* path_copy;
+  char* token;
+  char* save_ptr;
+
+  if (name == NULL)
+    return NULL;
+
+  *name = NULL;
+  if (path == NULL || *path == '\0')
+    return NULL;
+  path_copy = malloc(strlen(path) + 1);
+  if (path_copy == NULL)
+    return NULL;
+  strlcpy(path_copy, path, strlen(path) + 1);
+
+  if (path[0] == '/') {
+    dir = dir_open_root();
+  } else {
+    dir = dir_open_cwd();
+  }
+
+  if (dir == NULL) {
+    free(path_copy);
+    return NULL;
+  }
+
+  token = strtok_r(path_copy, "/", &save_ptr);
+  if (token == NULL) {
+    dir_close(dir);
+    free(path_copy);
+    return NULL;
+  }
+
+  for (;;) {
+    char* next = strtok_r(NULL, "/", &save_ptr);
+    if (next == NULL) {
+      *name = malloc(strlen(token) + 1);
+      if (*name == NULL) {
+        dir_close(dir);
+        free(path_copy);
+        return NULL;
+      }
+      strlcpy(*name, token, strlen(token) + 1);
+      free(path_copy);
+      return dir;
+    }
+
+    struct inode* inode = NULL;
+    bool is_dir = dir_lookup(dir, token, &inode);
+    if (inode == NULL || !is_dir) {
+      inode_close(inode);
+      dir_close(dir);
+      free(path_copy);
+      return NULL;
+    }
+
+    struct dir* next_dir = dir_open(inode);
+    if (next_dir == NULL) {
+      dir_close(dir);
+      free(path_copy);
+      return NULL;
+    }
+    dir_close(dir);
+    dir = next_dir;
+    token = next;
+  }
+}
 
 /* Opens and returns a new directory for the same inode as DIR.
    Returns a null pointer on failure. */
@@ -88,22 +166,23 @@ static bool lookup(const struct dir* dir, const char* name, struct dir_entry* ep
    a null pointer.  The caller must close *INODE. */
 bool dir_lookup(const struct dir* dir, const char* name,
                 struct inode** inode) { //true if is_dir false if is file
-  if(strcmp(name,".")==0){
+  ASSERT(dir != NULL);
+  ASSERT(name != NULL);
+  ASSERT(inode != NULL);
+
+  if (strcmp(name, ".") == 0) {
     *inode = inode_reopen(dir->inode);
     return true;
   }
   struct dir_entry e;
 
-  ASSERT(dir != NULL);
-  ASSERT(name != NULL);
-
-  if (lookup(dir, name, &e, NULL))
+  if (lookup(dir, name, &e, NULL)) {
     *inode = inode_open(e.inode_sector);
-  else
+    return e.is_dir;
+  } else {
     *inode = NULL;
-
-  // return *inode != NULL;
-  return e.is_dir;
+    return false;
+  }
 }
 
 /* Adds a file named NAME to DIR, which must not already contain a
@@ -193,7 +272,7 @@ bool dir_readdir(struct dir* dir, char name[NAME_MAX + 1]) {
 
   while (inode_read_at(dir->inode, &e, sizeof e, dir->pos) == sizeof e) {
     dir->pos += sizeof e;
-    if (e.in_use) {
+    if (e.in_use&&strcmp(e.name,"..")) {
       strlcpy(name, e.name, NAME_MAX + 1);
       return true;
     }
@@ -201,153 +280,65 @@ bool dir_readdir(struct dir* dir, char name[NAME_MAX + 1]) {
   return false;
 }
 
-bool mkdir_(char* path) {
+bool mkdir_(char* path) { //add the parent dir to it
+  char* name;
+  struct dir* dir = dir_open_path(path, &name);
+  struct inode* inode = NULL;
+  block_sector_t sector = 0;
+  bool success;
 
-  struct dir* dir = dir_open_root();
-  char *token, *save_ptr;
-  int total_entity = 0;
-  char* name_copy = malloc(sizeof(char) * (strlen(path) + 1));
-  if(!name_copy){
+  if (dir == NULL)
+    return false;
+
+  bool is_dir = dir_lookup(dir, name, &inode);
+  if (inode != NULL) {
+    inode_close(inode);
     dir_close(dir);
+    free(name);
+    return is_dir;
+  }
+
+  if (!free_map_allocate(1, &sector) || !dir_create(sector, 16)) {
+    if (sector != 0)
+      free_map_release(sector, 1);
+    dir_close(dir);
+    free(name);
     return false;
   }
-  memcpy(name_copy, path, sizeof(char) * (strlen(path) + 1));
-  for (token = strtok_r(name_copy, "/", &save_ptr); token != NULL;
-       token = strtok_r(NULL, "/", &save_ptr)) {
-    total_entity++;
-  }
-
-  if (total_entity == 0) {
-    dir_close(dir);
-    free(name_copy);
-    return false;
-    
-  }
-  char** entity_v = malloc(total_entity * sizeof(char*));
-  if(!entity_v){
-    dir_close(dir);
-    free(name_copy);
-    return false;
-  }
-  int i = 0;
-  memcpy(name_copy, path, sizeof(char) * (strlen(path) + 1));
-  for (token = strtok_r(name_copy, "/", &save_ptr); token != NULL;
-       token = strtok_r(NULL, "/", &save_ptr)) {
-    entity_v[i] = token;
-
-    i++;
-  }
-
-  for (int j = 0; j < total_entity; ++j) {
-    if (j == total_entity - 1) {
-      struct inode* inode = NULL;
-      bool is_dir = dir_lookup(dir, entity_v[j], &inode);
-      if (inode != NULL) { //already exist, if is_dir return true
-        dir_close(dir);
-        free(entity_v);
-        free(name_copy);
-        return is_dir;
-      }
-      block_sector_t sector;
-      if (!free_map_allocate(1, &sector)) {
-        dir_close(dir);
-        free(entity_v);
-        free(name_copy);
-        return false;
-      }
-      bool success = dir_create(sector, 16);
-      if (!success) {
-        dir_close(dir);
-        free(entity_v);
-        free(name_copy);
-        return false;
-      }
-      return dir_add(dir, entity_v[j], sector, true);
-    }
-    struct inode* inode = NULL;
-    bool is_dir = dir_lookup(dir, entity_v[j], &inode);
-    if (inode == NULL || !is_dir) {
-
-      dir_close(dir);
-      free(entity_v);
-      free(name_copy);
-      return NULL;
-
-    } else {
-      dir_close(dir);
-      dir = dir_open(inode);
-    }
-  }
+  struct dir* dir_new = dir_open(inode_open(sector));
+  dir_add(dir_new, "..", get_inode_sector(dir->inode), true);
+  success = dir_add(dir, name, sector, true);
+  if (!success)
+    free_map_release(sector, 1);
+  dir_close(dir);
+  free(name);
+  return success;
 }
 
-bool isdir_(char* path) {
-  if(strcmp(path,"/")==0){
+bool isdir_(char* path, block_sector_t* sector) {
+  if (path == NULL)
+    return false;
+  if (strcmp(path, "/") == 0) {
     return true;
   }
-  struct dir* dir = dir_open_root();
-  char *token, *save_ptr;
-  int total_entity = 0;
-  char* name_copy = malloc(sizeof(char) * (strlen(path) + 1));
-  if(!name_copy){
-    dir_close(dir);
-    return false;
-    
-  }
-  memcpy(name_copy, path, sizeof(char) * (strlen(path) + 1));
-  for (token = strtok_r(name_copy, "/", &save_ptr); token != NULL;
-       token = strtok_r(NULL, "/", &save_ptr)) {
-    total_entity++;
-  }
+  char* name;
+  struct dir* dir = dir_open_path(path, &name);
+  struct inode* inode = NULL;
+  bool is_dir = false;
 
-  if (total_entity == 0) {
+  if (dir == NULL)
+    return false;
+  is_dir = dir_lookup(dir, name, &inode);
+  if(!inode){
     dir_close(dir);
-    free(name_copy);
+    free(name);
     return false;
   }
-  char** entity_v = malloc(total_entity * sizeof(char*));
-  if(!entity_v){
-    dir_close(dir);
-    free(name_copy);
-    return false;
-  }
-  int i = 0;
-  memcpy(name_copy, path, sizeof(char) * (strlen(path) + 1));
-  for (token = strtok_r(name_copy, "/", &save_ptr); token != NULL;
-       token = strtok_r(NULL, "/", &save_ptr)) {
-    entity_v[i] = token;
-
-    i++;
-  }
-
-  for (int j = 0; j < total_entity; ++j) {
-    if (j == total_entity - 1) {
-      struct inode* inode = NULL;
-      bool is_dir = dir_lookup(dir, entity_v[j], &inode);
-      if (inode != NULL) { //already exist, if is_dir return true
-        dir_close(dir);
-        free(entity_v);
-        free(name_copy);
-        return is_dir;
-      }
-      dir_close(dir);
-      free(entity_v);
-      free(name_copy);
-      return false;
-    }
-    struct inode* inode = NULL;
-    bool is_dir = dir_lookup(dir, entity_v[j], &inode);
-    if (inode == NULL || !is_dir) {
-
-      dir_close(dir);
-      free(entity_v);
-      free(name_copy);
-      return false;
-
-    } else {
-      dir_close(dir);
-      dir = dir_open(inode);
-    }
-  }
+  *sector = get_inode_sector(inode);
+  inode_close(inode);
+  dir_close(dir);
+  free(name);
+  return inode != NULL && is_dir;
 }
 
 int dir_len(struct dir* dir) {
