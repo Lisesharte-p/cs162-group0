@@ -421,6 +421,9 @@ void file_close_list(struct list* file_list) {
     if (fd->file_descriptor) {
       file_close(fd->file_descriptor);
     }
+    // if(fd->dir!=NULL){
+    //   dir_close(fd->dir);
+    // }
     free(fd);
   }
 }
@@ -1231,7 +1234,10 @@ bool add_file_descriptor(struct list* list_, struct file* file_, int fd,bool isd
   new_fd_node->file_descriptor = file_;
   new_fd_node->fd = fd;
   if(isdir){
-    new_fd_node->dir = dir_open(file_->inode);
+    new_fd_node->dir = dir_open(inode_reopen(file_->inode));
+    if(new_fd_node->fd==NULL){
+      PANIC("open dir failed\n");
+    }
   }
   list_push_back(list_, &new_fd_node->elem);
   return true;

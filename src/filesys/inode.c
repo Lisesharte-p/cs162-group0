@@ -333,11 +333,11 @@ void inode_close(struct inode* inode) {
 
         buffer_read(fs_device, inode->data.sectors[i], node, BLOCK_SECTOR_SIZE, 0);
         for (int j = 0; j < (INODE_SECOND_LAYER_NODES > sector_cnt - i * INODE_FIRST_LAYER_NODES
-                                 ? INODE_FIRST_LAYER_NODES
-                                 : sector_cnt - i * INODE_SECOND_LAYER_NODES);
+                                 ? sector_cnt - i * INODE_SECOND_LAYER_NODES
+                                 : INODE_SECOND_LAYER_NODES);
              ++j) {
 
-          free_map_release(node->sectors[i], 1);
+          free_map_release(node->sectors[j], 1);
         }
       }
       free(node);

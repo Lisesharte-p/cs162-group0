@@ -367,9 +367,10 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
       file_name = malloc((1 + strlen((char*)args[1])) * sizeof(char));
       memcpy(file_name, (char*)args[1], strlen((char*)args[1]) + 1);
     }
-    // printf("%s\n",file_name);
+
     bool exist = isdir_(file_name);
     if (!exist) {
+
       f->eax = 0;
       free(file_name);
       return;
@@ -378,6 +379,7 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     memcpy(cwd, file_name, path_len + 1); //add '/' at the back
     strlcat(cwd, "/", path_len + 2);
     free(file_name);
+
     f->eax = 1;
     return;
   }
@@ -401,9 +403,9 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     char* cwd = thread_current()->pcb->cwd;
     int len = strlen((char*)args[1]) + strlen(cwd);
     char* file_name;
-    if (!((char*)args[1])[0] == '/') {
+    if (((char*)args[1])[0] != '/') {
       file_name = malloc((1 + len) * sizeof(char));
-      memcpy(file_name, cwd, strlen(cwd));
+      memcpy(file_name, cwd, strlen(cwd)+1);
       strlcat(file_name, (char*)args[1], len + 1);
     } else {
       file_name = malloc((1 + strlen((char*)args[1])) * sizeof(char));
@@ -411,6 +413,10 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     }
 
     f->eax = mkdir_(file_name);
+    if(!f->eax){
+      printf("mkdir failed\n");
+    }
+
     free(file_name);
     return;
   }
@@ -490,6 +496,22 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     return;
   }
   if (args[0] == SYS_REMOVE) {
+    validate(args, 1);
+    char* cwd = thread_current()->pcb->cwd;
+    int len = strlen((char*)args[1]) + strlen(cwd);
+    char* file_name;
+    if (((char*)args[1])[0] != '/') {
+      file_name = malloc((1 + len) * sizeof(char));
+      memcpy(file_name, cwd, strlen(cwd)+1);
+      strlcat(file_name, (char*)args[1], len + 1);
+    } else {
+      file_name = malloc((1 + strlen((char*)args[1])) * sizeof(char));
+      memcpy(file_name, (char*)args[1], strlen((char*)args[1]) + 1);
+    }
+
+    f->eax = filesys_remove(file_name);
+    free(file_name);
+    return;
   }
   if (args[0] == SYS_INUMBER) {
     validate(args, 1);

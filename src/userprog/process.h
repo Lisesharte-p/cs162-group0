@@ -49,8 +49,8 @@ struct process {
   int next_thread_num;
   unsigned long thread_id_bitmap_buf[32];
   struct bitmap* thread_id_bitmap;
-  char cwd[15];
-  char file_path[15];
+  char cwd[1024];
+  char file_path[1024];
 };
 
 struct file_descriptors {
