@@ -62,7 +62,7 @@ static inline void* ptov(uintptr_t paddr) {
 
 /* Returns physical address at which kernel virtual address VADDR
    is mapped. */
-static inline uintptr_t vtop(const void* vaddr) {
+static inline uintptr_t vtop(const void* vaddr) {//the kernel is loaded at physical addr 0x2000 and mapped to 0xc0002000 
   ASSERT(is_kernel_vaddr(vaddr));
 
   return (uintptr_t)vaddr - (uintptr_t)PHYS_BASE;

@@ -68,7 +68,7 @@ static char** read_command_line(void);
 static char** parse_options(char** argv);
 static void run_actions(char** argv);
 static void usage(void);
-
+static void print_mem_msg(void);
 #ifdef FILESYS
 static void locate_block_devices(void);
 static void locate_block_device(enum block_type, const char* name);
@@ -77,7 +77,7 @@ static void locate_block_device(enum block_type, const char* name);
 /* Pintos main program. */
 int main(void) {
   char** argv;
-
+  print_mem_msg();
   /* Clear BSS. */
   bss_init();
 
@@ -144,7 +144,7 @@ int main(void) {
   locate_block_devices();
   page_buffer_init();
   filesys_init(format_filesys);
-  
+
 #endif
 
   printf("Boot complete.\n");
@@ -172,7 +172,7 @@ static void bss_init(void) {
    kernel virtual mapping, and then sets up the CPU to use the
    new page directory.  Points init_page_dir to the page
    directory it creates. */
-static void paging_init(void) {
+static void paging_init(void) {//TODO: page higher memory
   uint32_t *pd, *pt;
   size_t page;
   extern char _start, _end_kernel_text;
@@ -488,3 +488,12 @@ static void locate_block_device(enum block_type role, const char* name) {
   }
 }
 #endif // FILESYS
+static void print_mem_msg(void) {
+  struct e820_map* map;
+  for (uint32_t i = 0; i < memory_map_count; ++i) {
+    map = (struct e820_map*)(memory_probe) + i;
+
+    printf("mem region %" PRIu32 " base %" PRIu64 " limit %" PRIu64 " type %"PRIu32"\n",
+           i, map->base, map->length/1024,map->type);
+  }
+}

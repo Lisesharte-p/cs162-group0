@@ -37,7 +37,13 @@
 extern uint32_t init_ram_pages;
 
 /* Page directory with kernel mappings only. */
-
+extern uint32_t memory_probe[64];
+extern uint32_t memory_map_count;
+struct e820_map {
+  uint64_t base;
+  uint64_t length;
+  uint32_t type;
+};
 #endif
 
 #endif /* threads/loader.h */

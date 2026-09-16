@@ -47,6 +47,29 @@ start:
 1:	shrl $2, %eax		# Total 4 kB pages
 	addr32 movl %eax, init_ram_pages - LOADER_PHYS_BASE - 0x20000
 
+	mov $0, %ebx
+	# The kernel's startup symbols are addressed relative to DS = 0x2000.
+	# Keep ES equal to DS and use the symbol's offset as DI.  Splitting the
+	# offset into a segment and offset would point BIOS at the wrong address.
+	addr32 mov $memory_probe - LOADER_PHYS_BASE - 0x20000, %eax
+	mov %ax, %di
+	mov %ds, %ax
+	mov %ax, %es
+.loop:
+	mov $0xe820, %eax
+	mov $20, %ecx
+	mov $0x534d4150, %edx
+	int $0x15
+	jc .fail
+	add $20,%di
+	addr32 incl memory_map_count - LOADER_PHYS_BASE - 0x20000
+	cmp $0,%ebx
+	jne .loop
+	jmp .done
+.fail:
+	addr32 mov $0,memory_map_count- LOADER_PHYS_BASE - 0x20000
+.done:
+
 #### Enable A20.  Address line 20 is tied low when the machine boots,
 #### which prevents addressing memory about 1 MB.  This code fixes it.
 
@@ -202,3 +225,9 @@ gdtdesc:
 init_ram_pages:
 	.long 0
 
+.globl memory_probe
+.globl memory_map_count
+memory_probe:
+	.space 256
+memory_map_count:
+	.long 0
