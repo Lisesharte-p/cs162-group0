@@ -343,13 +343,13 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
   }
   if (args[0] == SYS_CHDIR) { //change cwd, may handle "../." in the future
     validate(args, 1);
-    char* cwd = thread_current()->pcb->cwd;
+    // char* cwd = thread_current()->pcb->cwd;
 
-    int len = strlen((char*)args[1]) + strlen(cwd);
+    // int len = strlen((char*)args[1]) + strlen(cwd);
     char* file_name;
 
-      file_name = malloc((1 + strlen((char*)args[1])) * sizeof(char));
-      memcpy(file_name, (char*)args[1], strlen((char*)args[1]) + 1);
+    file_name = malloc((1 + strlen((char*)args[1])) * sizeof(char));
+    memcpy(file_name, (char*)args[1], strlen((char*)args[1]) + 1);
 
 
     bool exist = isdir_(file_name,&thread_current()->pcb->cwd_sector);
@@ -361,8 +361,8 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     }
 
     int path_len = strlen(file_name);
-    memcpy(cwd, file_name, path_len + 1); //add '/' at the back
-    strlcat(cwd, "/", path_len + 2);
+    // memcpy(cwd, file_name, path_len + 1); //add '/' at the back
+    // strlcat(cwd, "/", path_len + 2);
     free(file_name);
 
     f->eax = 1;
@@ -385,8 +385,8 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
   }
   if (args[0] == SYS_MKDIR) {
     validate(args, 1);
-    char* cwd = thread_current()->pcb->cwd;
-    int len = strlen((char*)args[1]) + strlen(cwd);
+    // char* cwd = thread_current()->pcb->cwd;
+    // int len = strlen((char*)args[1]) + strlen(cwd);
     char* file_name;
 
       file_name = malloc((1 + strlen((char*)args[1])) * sizeof(char));
@@ -475,8 +475,8 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
   }
   if (args[0] == SYS_REMOVE) {
     validate(args, 1);
-    char* cwd = thread_current()->pcb->cwd;
-    int len = strlen((char*)args[1]) + strlen(cwd);
+    // char* cwd = thread_current()->pcb->cwd;
+    // int len = strlen((char*)args[1]) + strlen(cwd);
     char* file_name;
 
     file_name = malloc((1 + strlen((char*)args[1])) * sizeof(char));
@@ -522,22 +522,22 @@ pid_t exec_(const char* cmd_line) {
     return -1;
   }
   bundle->parent_tid = thread_current()->pcb->main_pid;
-  bundle->cwd = malloc(15 * sizeof(char));
+
   bundle->cwd_sector = thread_current()->pcb->cwd_sector;
-  memcpy(bundle->cwd, thread_current()->pcb->cwd, strlen(thread_current()->pcb->cwd) + 1);
+
 
   strlcpy(bundle->file_name, cmd_line, strlen(cmd_line) + 1);
   pid_t id = thread_create(cmd_line, PRI_DEFAULT, start_process, (void*)bundle);
   if (id == TID_ERROR) {
     palloc_free_page(bundle->file_name);
-    free(bundle->cwd);
+
     free(bundle);
     return -1;
   }
   sema_down(&sync_sig);
   bool success = bundle->success;
   pid_t child_pid = bundle->child_pid;
-  free(bundle->cwd);
+
   palloc_free_page(bundle->file_name);
   free(bundle);
   if (!success) {

@@ -99,7 +99,7 @@ pid_t process_execute(const char* file_name) {
   bundle->file_name = fn_copy;
   bundle->sema = load_sema;
   bundle->parent_tid = thread_current()->tid;
-  bundle->cwd = "/";
+
   bundle->cwd_sector = ROOT_DIR_SECTOR;
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create(file_name, PRI_DEFAULT, start_process, bundle);
@@ -154,10 +154,9 @@ void start_process(void* file_name_) {
     new_pcb->next_thread_num = 1;
     new_pcb->parent_pid = bundle->parent_tid;
 
-    memcpy(new_pcb->cwd, bundle->cwd, strlen(bundle->cwd) + 1); //the "\0"
+
     new_pcb->cwd_sector = bundle->cwd_sector;
-    memcpy(new_pcb->file_path, bundle->cwd, strlen(bundle->cwd) + 1);
-    int len = strlen(new_pcb->file_path) + strlen(bundle->file_name);
+
 
     //file lists
     sema_init(&(new_pcb->sema_exit), 0);
@@ -172,6 +171,8 @@ void start_process(void* file_name_) {
 
     new_pcb->thread_id_bitmap = bitmap_create_in_buf(MAX_THREADS, new_pcb->thread_id_bitmap_buf,
                                                      sizeof new_pcb->thread_id_bitmap_buf);
+
+
     bitmap_set(new_pcb->thread_id_bitmap, 0, true);
     t->id_in_process = bitmap_scan_and_flip(new_pcb->thread_id_bitmap, 1, 1, false);
     // Continue initializing the PCB as normal
@@ -185,7 +186,8 @@ void start_process(void* file_name_) {
       pn_len = sizeof t->pcb->process_name - 1;
     memcpy(t->pcb->process_name, file_name, pn_len);
     t->pcb->process_name[pn_len] = '\0';
-    strlcat(new_pcb->file_path, t->pcb->process_name, len + 1);//TODO: refactor
+
+
   }
 
   /* Initialize interrupt frame and load executable. */
@@ -304,7 +306,7 @@ faliure:
     thread_exit();
   }
 
-  struct file* exe_file = filesys_open(new_pcb->file_path);
+  struct file* exe_file = filesys_open(t->pcb->process_name);
   file_deny_write(exe_file);
   int new_fd = new_pcb->next_fd; //should be 2
   new_pcb->next_fd += 1;
