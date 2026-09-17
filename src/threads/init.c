@@ -79,12 +79,16 @@ int main(void) {
   char** argv;
   print_mem_msg();
 
-  uint64_t len=(((struct e820_map*)(memory_probe)+3)->length);
-  len+=(((struct e820_map*)(memory_probe)+3)->base);
-  init_ram_pages=len>>12;
-  
-  /* Clear BSS. */
-  bss_init();
+  for (int i = 0; i < memory_map_count;++i){
+    struct e820_map* map = (struct e820_map*)(memory_probe) + i;
+    if(map->type==1&&map->length>1024*1024){
+      init_ram_pages = map->length >> 12;
+      break;
+    }
+  }
+
+    /* Clear BSS. */
+    bss_init();
 
   /* Break command line into arguments and parse options. */
   argv = read_command_line();
@@ -99,10 +103,11 @@ int main(void) {
   printf("Pintos booting with %'" PRIu32 " kB RAM...\n", init_ram_pages * PGSIZE / 1024);
 
   /* Initialize memory system. */
-  palloc_init(user_page_limit);
+  palloc_init_kernel(user_page_limit);
   malloc_init();
   paging_init();
-
+  palloc_init_user(user_page_limit);
+  
   /* Segmentation. */
 #ifdef USERPROG
   tss_init();
