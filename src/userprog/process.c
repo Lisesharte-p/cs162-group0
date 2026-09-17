@@ -1233,6 +1233,23 @@ bool extend_stack(void* fault_addr) {
   }
   return success;
 }
+
+bool page_install(void* fault_addr) {
+  struct thread* t = thread_current();
+
+  uint8_t* kpage;
+  bool success = false;
+  kpage = palloc_get_page(PAL_USER | PAL_ZERO);
+  if (kpage != NULL) {
+    void* upage = pg_round_down(fault_addr);
+    success = install_page(upage, kpage, true);
+    if (!success) {
+      palloc_free_page(kpage);
+    }
+  }
+  return success;
+}
+
 bool add_file_descriptor(struct list* list_, struct file* file_, int fd,bool isdir) {
   struct file_descriptors* new_fd_node = malloc(sizeof(struct file_descriptors));
   if (!new_fd_node) {

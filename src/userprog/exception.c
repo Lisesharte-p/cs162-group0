@@ -152,11 +152,17 @@ static void page_fault(struct intr_frame* f) {
     }
   }
   if (!user && is_user_vaddr(fault_addr)) { //user passed invalid ptr
-
     thread_current()->pcb->exit_code = -1;
     process_exit();
     NOT_REACHED();
   }
+
+//   if(not_present){
+//       bool success = page_install(fault_addr);
+//     if (success) {
+//       return;
+//     }
+//   }
   /* To implement virtual memory, delete the rest of the function
      body, and replace it with code that brings in the page to
      which fault_addr refers. */

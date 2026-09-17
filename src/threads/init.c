@@ -44,7 +44,7 @@
 
 /* Page directory with kernel mappings only. */
 uint32_t* init_page_dir;
-
+uint32_t total_phy_pages;
 #ifdef FILESYS
 /* -f: Format the file system? */
 static bool format_filesys;
@@ -78,6 +78,11 @@ static void locate_block_device(enum block_type, const char* name);
 int main(void) {
   char** argv;
   print_mem_msg();
+
+  uint64_t len=(((struct e820_map*)(memory_probe)+3)->length);
+  len+=(((struct e820_map*)(memory_probe)+3)->base);
+  init_ram_pages=len>>12;
+  
   /* Clear BSS. */
   bss_init();
 
@@ -172,7 +177,7 @@ static void bss_init(void) {
    kernel virtual mapping, and then sets up the CPU to use the
    new page directory.  Points init_page_dir to the page
    directory it creates. */
-static void paging_init(void) {//TODO: page higher memory
+static void paging_init(void) { //TODO: page higher memory
   uint32_t *pd, *pt;
   size_t page;
   extern char _start, _end_kernel_text;
@@ -490,10 +495,14 @@ static void locate_block_device(enum block_type role, const char* name) {
 #endif // FILESYS
 static void print_mem_msg(void) {
   struct e820_map* map;
+  uint32_t total_pages=0;
   for (uint32_t i = 0; i < memory_map_count; ++i) {
     map = (struct e820_map*)(memory_probe) + i;
-
-    printf("mem region %" PRIu32 " base %" PRIu64 " limit %" PRIu64 " type %"PRIu32"\n",
-           i, map->base, map->length/1024,map->type);
+    total_pages+=map->length>>12;
+    printf("mem region %" PRIu32 " base %" PRIu64 " limit %" PRIu64 " type %" PRIu32 "\n", i,
+           map->base, map->length , map->type);
+    printf("mem region %"PRIu32" total pages %"PRIu64"\n",i,map->length>>12);
   }
+
 }
+

@@ -117,5 +117,6 @@ struct thread* get_thread_in_process(tid_t tid, struct process* p);
 void sema_close_list(struct list*);
 void lock_close_list(struct list*);
 bool extend_stack(void* fault_addr);
+bool page_install(void* fault_addr);
 bool add_file_descriptor(struct list* list_, struct file* file_, int fd,bool is_dir);
 #endif /* userprog/process.h */
