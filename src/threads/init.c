@@ -42,6 +42,7 @@
 #include "filesys/buffer_cache.h"
 #endif
 
+#define max_kernel_pages 262144
 /* Page directory with kernel mappings only. */
 uint32_t* init_page_dir;
 uint32_t total_phy_pages;
@@ -106,7 +107,7 @@ int main(void) {
   palloc_init_kernel(user_page_limit);
   malloc_init();
   paging_init();
-  palloc_init_user(user_page_limit);
+  // palloc_init_user(user_page_limit);
   
   /* Segmentation. */
 #ifdef USERPROG
@@ -182,7 +183,7 @@ static void bss_init(void) {
    kernel virtual mapping, and then sets up the CPU to use the
    new page directory.  Points init_page_dir to the page
    directory it creates. */
-static void paging_init(void) { //TODO: page higher memory
+static void paging_init(void) { 
   uint32_t *pd, *pt;
   size_t page;
   extern char _start, _end_kernel_text;
