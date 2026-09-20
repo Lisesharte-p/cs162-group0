@@ -851,19 +851,21 @@ static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t 
     if (kpage == NULL)
       return false;
 
+    /* Map the page before accessing it through its user address. */
+    if (!install_page(upage, ptov((uintptr_t)kpage), true)) {
+      palloc_free_page(kpage);
+      return false;
+    }
+
     /* Load this page. */
-    if (file_read(file, kpage, page_read_bytes) != (int)page_read_bytes) {
+    if (file_read(file, upage, page_read_bytes) != (int)page_read_bytes) {
+      pagedir_clear_page(thread_current()->pcb->pagedir, upage);
       palloc_free_page(kpage);
       return false;
     }
-    memset(kpage + page_read_bytes, 0, page_zero_bytes);
-
-    /* Add the page to the process's address space. */
-    if (!install_page(upage, kpage, writable)) {
-      palloc_free_page(kpage);
-      return false;
-    }
-
+    memset(upage + page_read_bytes, 0, page_zero_bytes);
+    if (!writable)
+      pagedir_set_writable(thread_current()->pcb->pagedir, upage, false);
     /* Advance. */
     read_bytes -= page_read_bytes;
     zero_bytes -= page_zero_bytes;
@@ -881,7 +883,7 @@ static bool setup_stack(void** esp) {
 
   kpage = palloc_get_page(PAL_USER | PAL_ZERO);
   if (kpage != NULL) {
-    success = install_page(((uint8_t*)PHYS_BASE) - PGSIZE, kpage, true);
+    success = install_page(((uint8_t*)PHYS_BASE) - PGSIZE, ptov((uintptr_t)kpage), true);
     if (success) {
       *esp = PHYS_BASE;
       struct thread* t = thread_current();
@@ -964,7 +966,7 @@ bool setup_thread(void (**eip)(void) UNUSED, void** esp UNUSED, stub_fun sf, str
   kpage = palloc_get_page(PAL_USER | PAL_ZERO);
   if (kpage != NULL) {
     void* upage = ((uint8_t*)0xc0000000 - t->id_in_process * (PGSIZE)) - PGSIZE;
-    success = install_page(upage, kpage, true);
+    success = install_page(upage, ptov((uintptr_t)kpage), true);
     if (success) {
       *esp = (void*)(0xc0000000 - t->id_in_process * (PGSIZE));
       t->user_stack_start = upage;
@@ -1224,7 +1226,7 @@ bool extend_stack(void* fault_addr) {
   kpage = palloc_get_page(PAL_USER | PAL_ZERO);
   if (kpage != NULL) {
     void* upage = pg_round_down(fault_addr);
-    success = install_page(upage, kpage, true);
+    success = install_page(upage, ptov((uintptr_t)kpage), true);
     if (success) {
       t->user_stack_end = t->user_stack_end > upage ? upage : t->user_stack_end;
     } else {
@@ -1242,7 +1244,7 @@ bool page_install(void* fault_addr) {
   kpage = palloc_get_page(PAL_USER | PAL_ZERO);
   if (kpage != NULL) {
     void* upage = pg_round_down(fault_addr);
-    success = install_page(upage, kpage, true);
+    success = install_page(upage, ptov((uintptr_t)kpage), true);
     if (!success) {
       palloc_free_page(kpage);
     }

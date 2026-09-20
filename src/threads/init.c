@@ -190,7 +190,11 @@ static void paging_init(void) {
 
   pd = init_page_dir = palloc_get_page(PAL_ASSERT | PAL_ZERO);
   pt = NULL;
-  for (page = 0; page < init_ram_pages; page++) {
+  uint32_t pages=init_ram_pages;
+  if (init_ram_pages > kernel_page_limit) {
+    pages = kernel_page_limit;
+  }
+  for (page = 0; page < pages; page++) { //TODO: page at most 1GB here
     uintptr_t paddr = page * PGSIZE;
     char* vaddr = ptov(paddr);
     size_t pde_idx = pd_no(vaddr);

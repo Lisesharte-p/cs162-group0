@@ -145,6 +145,23 @@ void pagedir_clear_page(uint32_t* pd, void* upage) {
   }
 }
 
+/* Changes the write permission of an existing user mapping. */
+void pagedir_set_writable(uint32_t* pd, void* upage, bool writable) {
+  uint32_t* pte;
+
+  ASSERT(pg_ofs(upage) == 0);
+  ASSERT(is_user_vaddr(upage));
+
+  pte = lookup_page(pd, upage, false);
+  if (pte != NULL && (*pte & PTE_P) != 0) {
+    if (writable)
+      *pte |= PTE_W;
+    else
+      *pte &= ~(uint32_t)PTE_W;
+    invalidate_pagedir(pd);
+  }
+}
+
 /* Returns true if the PTE for virtual page VPAGE in PD is dirty,
    that is, if the page has been modified since the PTE was
    installed.

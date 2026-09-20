@@ -2,7 +2,7 @@
 #define THREADS_PALLOC_H
 
 #include <stddef.h>
-
+#define kernel_page_limit 251888 //1GB kernel space, starts from 1MB
 /* How to allocate pages. */
 enum palloc_flags {
   PAL_ASSERT = 001, /* Panic on failure. */

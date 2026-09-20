@@ -35,32 +35,39 @@ struct pool {
 /* Two pools: one for kernel data, one for user pages. */
 static struct pool kernel_pool, user_pool;
 
-static void init_pool(struct pool*, void* base, size_t page_cnt, const char* name,void* bitmap_buf);
+static void init_pool(struct pool*, void* base, size_t page_cnt, const char* name,
+                      void* bitmap_buf);
 static bool page_from_pool(const struct pool*, void* page);
 
 /* Initializes the page allocator.  At most USER_PAGE_LIMIT
    pages are put into the user pool. */
 void palloc_init_kernel(size_t user_page_limit) {
   /* Free memory starts at 1 MB and runs to the end of RAM. */
-  uint8_t* free_start = ptov(1024 * 1024);
+  uint8_t* free_start = (void*)(1024 * 1024);
   // uint8_t* free_end = ptov(init_ram_pages * PGSIZE);
-  uint8_t* free_end = ptov(init_ram_pages * PGSIZE);
+  uint8_t* free_end = (void*)(init_ram_pages * PGSIZE);
   size_t free_pages = (free_end - free_start) / PGSIZE;
   size_t user_pages = free_pages / 2;
   size_t kernel_pages;
   if (user_pages > user_page_limit)
     user_pages = user_page_limit;
   kernel_pages = free_pages - user_pages;
-
-  uint32_t bitmap_page_kernel = DIV_ROUND_UP(bitmap_buf_size(kernel_pages),PGSIZE);
+  if (kernel_pages > kernel_page_limit) {
+    kernel_pages = kernel_page_limit;
+  }
+  uint32_t bitmap_page_kernel = DIV_ROUND_UP(bitmap_buf_size(kernel_pages), PGSIZE);
   uint32_t bitmap_page_user = DIV_ROUND_UP(bitmap_buf_size(user_pages), PGSIZE);
-  uint8_t* kernel_bitmap_buf = free_start;
-  uint8_t* user_bitmap_buf = free_start + PGSIZE * bitmap_page_kernel;
-  
+
+  void* kernel_bitmap_buf = ptov((uintptr_t)free_start);
+  void* user_bitmap_buf = ptov((uintptr_t)free_start) + PGSIZE * bitmap_page_kernel;
+
   /* Give half of memory to kernel, half to user. */
-  init_pool(&kernel_pool, free_start+(PGSIZE*(bitmap_page_kernel+bitmap_page_user)), kernel_pages, "kernel pool",kernel_bitmap_buf);
+  init_pool(&kernel_pool,
+            (ptov)((uintptr_t)free_start) + (PGSIZE * (bitmap_page_kernel + bitmap_page_user)),
+            kernel_pages, "kernel pool", kernel_bitmap_buf);
   init_pool(&user_pool,
-            free_start + kernel_pages * PGSIZE + (PGSIZE * (bitmap_page_kernel + bitmap_page_user)),
+            (free_start) + kernel_pages * PGSIZE +
+                (PGSIZE * (bitmap_page_kernel + bitmap_page_user)),
             user_pages, "user pool", user_bitmap_buf);
 }
 void palloc_init_user(size_t user_page_limit) {
@@ -100,7 +107,7 @@ void* palloc_get_multiple(enum palloc_flags flags, size_t page_cnt) {
     pages = NULL;
 
   if (pages != NULL) {
-    if (flags & PAL_ZERO)
+    if (flags & PAL_ZERO && !(flags & PAL_USER))
       memset(pages, 0, PGSIZE * page_cnt);
   } else {
     if (flags & PAL_ASSERT)
@@ -128,14 +135,16 @@ void palloc_free_multiple(void* pages, size_t page_cnt) {
   if (pages == NULL || page_cnt == 0)
     return;
 
-  if (page_from_pool(&kernel_pool, pages))
+  if (page_from_pool(&kernel_pool, pages)) {
     pool = &kernel_pool;
-  else if (page_from_pool(&user_pool, pages))
+    page_idx = pg_no(pages) - pg_no(pool->base);
+  } else if (page_from_pool(&user_pool, (void*)((uintptr_t)pages - (uintptr_t)PHYS_BASE))) {
     pool = &user_pool;
-  else
+    page_idx = pg_no((void*)((uintptr_t)pages - (uintptr_t)PHYS_BASE)) - pg_no(pool->base);
+  } else
     NOT_REACHED();
 
-  page_idx = pg_no(pages) - pg_no(pool->base);
+  
 
 #ifndef NDEBUG
   memset(pages, 0xcc, PGSIZE * page_cnt);
@@ -150,7 +159,8 @@ void palloc_free_page(void* page) { palloc_free_multiple(page, 1); }
 
 /* Initializes pool P as starting at START and ending at END,
    naming it NAME for debugging purposes. */
-static void init_pool(struct pool* p, void* base, size_t page_cnt, const char* name,void* bitmap_buf) {
+static void init_pool(struct pool* p, void* base, size_t page_cnt, const char* name,
+                      void* bitmap_buf) {
   /* We'll put the pool's used_map at its base.
      Calculate the space needed for the bitmap
      and subtract it from the pool's size. */

@@ -706,8 +706,8 @@ int fork_(struct intr_frame* f) { //reopen files, copy pagedir and set to COW
         free(child_pcb);
         return -1;
       }
-      memcpy(new_page, page_base, PGSIZE);
-      pagedir_set_page(pd_child, upage, new_page, true, false);
+      memcpy(ptov((uintptr_t)new_page), page_base, PGSIZE);
+      pagedir_set_page(pd_child, upage, ptov((uintptr_t)new_page), true, false);
     }
   }
 
