@@ -7,8 +7,10 @@
 #include "threads/pte.h"
 #include "threads/palloc.h"
 #include "userprog/process.h"
+#include "vm/vm.h"
 
 static void invalidate_pagedir(uint32_t*);
+static uint32_t* lookup_page(uint32_t*, const void*, bool);
 
 /* Creates a new page directory that has mappings for kernel
    virtual addresses, but none for user virtual addresses.
@@ -20,7 +22,13 @@ uint32_t* pagedir_create(void) {
     memcpy(pd, init_page_dir, PGSIZE);
   return pd;
 }
-
+bool page_is_cow(uint32_t* pd, const void* upage){
+  if(!pd){
+    return false;
+  }
+  uint32_t *pte = lookup_page(pd, upage, false);
+  return pte != NULL && (*pte & PTE_P) != 0 && (*pte & PTE_COW) != 0;
+}
 /* Destroys page directory PD, freeing all the pages it
    references. */
 void pagedir_destroy(uint32_t* pd) {
@@ -42,7 +50,11 @@ void pagedir_destroy(uint32_t* pd) {
           void* va = (void*)((pde - pd) << PDSHIFT | (pte - pt) << PTSHIFT);
           if (va >= USER_LFB_VA && va < USER_LFB_VA + VGA_LFB_XRES * VGA_LFB_YRES * 4)
             continue;
-          palloc_free_page((void*)vtop(pte_get_page(*pte)), true);
+          void* page = (void*)vtop(pte_get_page(*pte));
+          if (ref_cnt(page) != 0)
+            ref_cnt_remove(page);
+          else
+            palloc_free_page(page, true);
         }
       palloc_free_page(pt,false);
     }
@@ -106,10 +118,91 @@ bool pagedir_set_page(uint32_t* pd, void* upage, void* kpage, bool writable, boo
   if (pte != NULL) {
     ASSERT((*pte & PTE_P) == 0);
     *pte = pte_create_user(kpage, writable);
-    // *pte = pte_set_cow(kpage, is_cow);
+    *pte = pte_set_cow(*pte, is_cow);
     return true;
   } else
     return false;
+}
+
+bool pagedir_replace_page(uint32_t* pd, void* upage, void* kpage, bool writable,
+                          bool is_cow) {
+  uint32_t* pte;
+
+  ASSERT(pg_ofs(upage) == 0);
+  ASSERT(pg_ofs(kpage) == 0);
+  ASSERT(is_user_vaddr(upage));
+  ASSERT(vtop(kpage) >> PTSHIFT < init_ram_pages);
+  ASSERT(pd != init_page_dir);
+
+  pte = lookup_page(pd, upage, false);
+  if (pte == NULL || (*pte & PTE_P) == 0)
+    return false;
+
+  *pte = pte_set_cow(pte_create_user(kpage, writable), is_cow);
+  invalidate_pagedir(pd);
+  return true;
+}
+
+bool pagedir_set_page_flags(uint32_t* pd, void* upage, bool writable, bool is_cow) {
+  uint32_t* pte;
+
+  ASSERT(pg_ofs(upage) == 0);
+  ASSERT(is_user_vaddr(upage));
+  pte = lookup_page(pd, upage, false);
+  if (pte == NULL || (*pte & PTE_P) == 0)
+    return false;
+
+  *pte = pte_set_writable(*pte, writable);
+  *pte = pte_set_cow(*pte, is_cow);
+  invalidate_pagedir(pd);
+  return true;
+}
+
+/* Maps a shared page on a new address space, or updates the existing PTE. */
+bool pagedir_set_cow_page(uint32_t* pd, void* upage, void* kpage, bool writable,
+                          bool is_cow) {
+  uint32_t* pte = lookup_page(pd, upage, false);
+  if (pte != NULL && (*pte & PTE_P) != 0)
+    return pagedir_replace_page(pd, upage, kpage, writable, is_cow);
+  return pagedir_set_page(pd, upage, kpage, writable, is_cow);
+}
+
+bool pagedir_set_physical_page(uint32_t* pd, void* upage, uintptr_t paddr,
+                               bool writable, bool is_cow) {
+  uint32_t* pte;
+
+  ASSERT(pg_ofs(upage) == 0);
+  ASSERT((paddr & PGMASK) == 0);
+  ASSERT(is_user_vaddr(upage));
+  ASSERT(pd != init_page_dir);
+  pte = lookup_page(pd, upage, true);
+  if (pte == NULL)
+    return false;
+  *pte = paddr | PTE_P | PTE_U | (writable ? PTE_W : 0);
+  *pte = pte_set_cow(*pte, is_cow);
+  invalidate_pagedir(pd);
+  return true;
+}
+
+uintptr_t pagedir_get_physical_page(uint32_t* pd, const void* upage) {
+  uint32_t* pte = lookup_page(pd, upage, false);
+  return pte != NULL && (*pte & PTE_P) != 0 ? (*pte & PTE_ADDR) : 0;
+}
+
+void* pagedir_map_temp_page(uint32_t* pd, uintptr_t paddr, bool writable) {
+  for (uintptr_t va = 0x80000000u; va < (uintptr_t)PHYS_BASE; va += PGSIZE) {
+    if (pagedir_get_physical_page(pd, (void*)va) == 0 &&
+        pagedir_set_physical_page(pd, (void*)va, paddr, writable, false))
+      return (void*)va;
+  }
+  return NULL;
+}
+
+void pagedir_unmap_temp_page(uint32_t* pd, void* upage) {
+  uint32_t* pte = lookup_page(pd, upage, false);
+  if (pte != NULL)
+    *pte &= ~PTE_P;
+  invalidate_pagedir(pd);
 }
 
 /* Looks up the physical address that corresponds to user virtual

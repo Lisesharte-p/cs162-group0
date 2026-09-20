@@ -2,7 +2,9 @@
 #define THREADS_PALLOC_H
 
 #include <stddef.h>
-#define kernel_page_limit 251888 //1GB kernel space, starts from 1MB
+#include <stdint.h>
+#define kernel_page_limit 251888 //1GB kernel space, starts from 1MB, save a page for fork
+
 /* How to allocate pages. */
 enum palloc_flags {
   PAL_ASSERT = 001, /* Panic on failure. */
@@ -10,7 +12,7 @@ enum palloc_flags {
   PAL_USER = 004    /* User page. */
 };
 
-void palloc_init_kernel(size_t user_page_limit);
+void palloc_init_kernel(size_t user_page_limit, uint32_t* user_pages, uint32_t* user_base);
 void* palloc_get_page(enum palloc_flags);
 void* palloc_get_multiple(enum palloc_flags, size_t page_cnt);
 void palloc_free_page(void*,bool);

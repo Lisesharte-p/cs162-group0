@@ -1,6 +1,7 @@
 #include "userprog/exception.h"
 #include <inttypes.h>
 #include <stdio.h>
+#include <string.h>
 #include "userprog/gdt.h"
 #include "userprog/process.h"
 #include "threads/interrupt.h"
@@ -8,14 +9,14 @@
 #include "threads/vaddr.h"
 #include "threads/palloc.h"
 #include "userprog/process.h"
+#include "userprog/pagedir.h"
+#include "vm/vm.h"
 /* Number of page faults processed. */
 static long long page_fault_cnt;
 
 static void kill(struct intr_frame*);
 static void page_fault(struct intr_frame*);
-bool addr_in_stack(const void* addr) {
-  return addr < PHYS_BASE && addr > STACK_LOWER;
-}
+bool addr_in_stack(const void* addr) { return addr < PHYS_BASE && addr > STACK_LOWER; }
 /* Registers handlers for interrupts that can be caused by user
    programs.
 
@@ -62,6 +63,44 @@ void exception_init(void) {
 
 /* Prints exception statistics. */
 void exception_print_stats(void) { printf("Exception: %lld page faults\n", page_fault_cnt); }
+
+static bool handle_cow(void* fault_addr) {
+  uint32_t* pd = thread_current()->pcb->pagedir;
+  void* upage = pg_round_down(fault_addr);
+  if (!page_is_cow(pd, upage)) {
+    return false;
+  }
+
+  uintptr_t old_phys = pagedir_get_physical_page(pd, upage);
+
+  if (ref_cnt((void*)old_phys) == 0) {
+    pagedir_set_page_flags(pd, upage, true, false);
+    return true;
+  }
+
+  void* new_page = palloc_get_page(PAL_USER);
+  if (new_page == NULL) {
+    return false;
+  }
+  uintptr_t new_phys = (uintptr_t)new_page;
+  void* old_temp = pagedir_map_temp_page(pd, old_phys, false);
+  void* new_temp = pagedir_map_temp_page(pd, new_phys, true);
+  if (old_temp == NULL || new_temp == NULL) {
+    if (old_temp != NULL)
+      pagedir_unmap_temp_page(pd, old_temp);
+    if (new_temp != NULL)
+      pagedir_unmap_temp_page(pd, new_temp);
+    palloc_free_page(new_page, true);
+    return false;
+  }
+  memcpy(new_temp, old_temp, PGSIZE);
+  pagedir_unmap_temp_page(pd, old_temp);
+  pagedir_unmap_temp_page(pd, new_temp);
+  pagedir_set_physical_page(pd, upage, new_phys, true, false);
+
+  ref_cnt_remove((void*)old_phys);
+  return true;
+}
 
 /* Handler for an exception (probably) caused by a user process. */
 static void kill(struct intr_frame* f) {
@@ -140,10 +179,10 @@ static void page_fault(struct intr_frame* f) {
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
-
   //stack growth
   if (addr_in_stack(fault_addr) &&
-      ((user && f->esp - 1024 < fault_addr) || (!user && thread_current()->user_stack_end<fault_addr)) &&
+      ((user && f->esp - 1024 < fault_addr) ||
+       (!user && thread_current()->user_stack_end < fault_addr)) &&
       not_present) {
 
     bool success = extend_stack(fault_addr);
@@ -151,18 +190,24 @@ static void page_fault(struct intr_frame* f) {
       return;
     }
   }
+
+  if (is_user_vaddr(fault_addr) && write && !not_present && handle_cow(fault_addr)) {
+   //  printf("Page fault\n");
+    return;
+  }
+
   if (!user && is_user_vaddr(fault_addr)) { //user passed invalid ptr
     thread_current()->pcb->exit_code = -1;
     process_exit();
     NOT_REACHED();
   }
 
-//   if(not_present){
-//       bool success = page_install(fault_addr);
-//     if (success) {
-//       return;
-//     }
-//   }
+  //   if(not_present){
+  //       bool success = page_install(fault_addr);
+  //     if (success) {
+  //       return;
+  //     }
+  //   }
   /* To implement virtual memory, delete the rest of the function
      body, and replace it with code that brings in the page to
      which fault_addr refers. */

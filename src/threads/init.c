@@ -41,7 +41,7 @@
 #include "filesys/fsutil.h"
 #include "filesys/buffer_cache.h"
 #endif
-
+#include "vm/vm.h"
 #define max_kernel_pages 262144
 /* Page directory with kernel mappings only. */
 uint32_t* init_page_dir;
@@ -80,16 +80,16 @@ int main(void) {
   char** argv;
   print_mem_msg();
 
-  for (int i = 0; i < memory_map_count;++i){
+  for (int i = 0; i < memory_map_count; ++i) {
     struct e820_map* map = (struct e820_map*)(memory_probe) + i;
-    if(map->type==1&&map->length>1024*1024){
+    if (map->type == 1 && map->length > 1024 * 1024) {
       init_ram_pages = map->length >> 12;
       break;
     }
   }
 
-    /* Clear BSS. */
-    bss_init();
+  /* Clear BSS. */
+  bss_init();
 
   /* Break command line into arguments and parse options. */
   argv = read_command_line();
@@ -104,11 +104,13 @@ int main(void) {
   printf("Pintos booting with %'" PRIu32 " kB RAM...\n", init_ram_pages * PGSIZE / 1024);
 
   /* Initialize memory system. */
-  palloc_init_kernel(user_page_limit);
+  uint32_t user_page;
+  uint32_t user_base;
+  palloc_init_kernel(user_page_limit, &user_page, &user_base);
   malloc_init();
   paging_init();
   // palloc_init_user(user_page_limit);
-  
+  vm_init(user_page, (uint8_t*)user_base);
   /* Segmentation. */
 #ifdef USERPROG
   tss_init();
@@ -183,14 +185,14 @@ static void bss_init(void) {
    kernel virtual mapping, and then sets up the CPU to use the
    new page directory.  Points init_page_dir to the page
    directory it creates. */
-static void paging_init(void) { 
+static void paging_init(void) {
   uint32_t *pd, *pt;
   size_t page;
   extern char _start, _end_kernel_text;
 
   pd = init_page_dir = palloc_get_page(PAL_ASSERT | PAL_ZERO);
   pt = NULL;
-  uint32_t pages=init_ram_pages;
+  uint32_t pages = init_ram_pages;
   if (init_ram_pages > kernel_page_limit) {
     pages = kernel_page_limit;
   }
@@ -505,14 +507,12 @@ static void locate_block_device(enum block_type role, const char* name) {
 #endif // FILESYS
 static void print_mem_msg(void) {
   struct e820_map* map;
-  uint32_t total_pages=0;
+  uint32_t total_pages = 0;
   for (uint32_t i = 0; i < memory_map_count; ++i) {
     map = (struct e820_map*)(memory_probe) + i;
-    total_pages+=map->length>>12;
+    total_pages += map->length >> 12;
     printf("mem region %" PRIu32 " base %" PRIu64 " limit %" PRIu64 " type %" PRIu32 "\n", i,
-           map->base, map->length , map->type);
-    printf("mem region %"PRIu32" total pages %"PRIu64"\n",i,map->length>>12);
+           map->base, map->length, map->type);
+    printf("mem region %" PRIu32 " total pages %" PRIu64 "\n", i, map->length >> 12);
   }
-
 }
-

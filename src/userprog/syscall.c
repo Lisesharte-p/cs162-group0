@@ -19,6 +19,7 @@
 #include "threads/palloc.h"
 #include "filesys/directory.h"
 #include "filesys/inode.h"
+#include "vm/vm.h"
 static void syscall_handler(struct intr_frame*);
 struct list_elem* list_find_file(struct list* list_, int fd);
 void remove_file(struct list* list_, int fd);
@@ -154,14 +155,13 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
       return;
     }
 
-      strlcpy(file_name, (const char*)args[1], strlen((const char*)args[1]) + 1);
-  
+    strlcpy(file_name, (const char*)args[1], strlen((const char*)args[1]) + 1);
 
     struct file* file_new = filesys_open((char*)(file_name));
 
     if (!file_new) {
- 
-      palloc_free_page(file_name,false);
+
+      palloc_free_page(file_name, false);
       f->eax = -1;
       return;
     }
@@ -169,10 +169,10 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     struct list* file_list = &thread_current()->pcb->fd_list;
     int new_fd = thread_current()->pcb->next_fd;
     thread_current()->pcb->next_fd += 1;
-    bool success = add_file_descriptor(file_list, file_new, new_fd,file_new->is_dir);
+    bool success = add_file_descriptor(file_list, file_new, new_fd, file_new->is_dir);
 
     f->eax = new_fd;
-    palloc_free_page(file_name,false);
+    palloc_free_page(file_name, false);
     if (!success) {
       file_close(file_new);
       f->eax = -1;
@@ -181,7 +181,7 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     return;
   }
 
-  if (args[0] == SYS_CLOSE) { 
+  if (args[0] == SYS_CLOSE) {
     validate(args, 1);
     struct list* file_list = &thread_current()->pcb->fd_list;
     close_file(file_list, args[1]);
@@ -247,11 +247,11 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
       return;
     }
 
-      strlcpy(file_name, (const char*)args[1], strlen((const char*)args[1]) + 1);
+    strlcpy(file_name, (const char*)args[1], strlen((const char*)args[1]) + 1);
 
     bool success = filesys_create(file_name, args[2]);
     f->eax = 1;
-    palloc_free_page(file_name,false);
+    palloc_free_page(file_name, false);
     if (!success) {
       f->eax = 0;
     }
@@ -351,8 +351,7 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     file_name = malloc((1 + strlen((char*)args[1])) * sizeof(char));
     memcpy(file_name, (char*)args[1], strlen((char*)args[1]) + 1);
 
-
-    bool exist = isdir_(file_name,&thread_current()->pcb->cwd_sector);
+    bool exist = isdir_(file_name, &thread_current()->pcb->cwd_sector);
     if (!exist) {
 
       f->eax = 0;
@@ -380,7 +379,7 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
       return;
     }
     struct file_descriptors* file_ptr = list_entry(file_node, struct file_descriptors, elem);
-    f->eax = file_ptr->file_descriptor->is_dir&&file_ptr->dir;
+    f->eax = file_ptr->file_descriptor->is_dir && file_ptr->dir;
     return;
   }
   if (args[0] == SYS_MKDIR) {
@@ -389,9 +388,8 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     // int len = strlen((char*)args[1]) + strlen(cwd);
     char* file_name;
 
-      file_name = malloc((1 + strlen((char*)args[1])) * sizeof(char));
-      memcpy(file_name, (char*)args[1], strlen((char*)args[1]) + 1);
-
+    file_name = malloc((1 + strlen((char*)args[1])) * sizeof(char));
+    memcpy(file_name, (char*)args[1], strlen((char*)args[1]) + 1);
 
     f->eax = mkdir_(file_name);
 
@@ -459,18 +457,18 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
   }
   if (args[0] == SYS_READDIR) {
     validate(args, 2);
-    struct list_elem* le = list_find_file(&thread_current()->pcb->fd_list,args[1]);
-    if(!le){
+    struct list_elem* le = list_find_file(&thread_current()->pcb->fd_list, args[1]);
+    if (!le) {
       f->eax = 0;
       return;
     }
     struct file_descriptors* fd = list_entry(le, struct file_descriptors, elem);
-    if(!fd->file_descriptor->is_dir||!fd->dir){
+    if (!fd->file_descriptor->is_dir || !fd->dir) {
       f->eax = 0;
       return;
     }
 
-    f->eax=dir_readdir(fd->dir,(char*)args[2]);
+    f->eax = dir_readdir(fd->dir, (char*)args[2]);
     return;
   }
   if (args[0] == SYS_REMOVE) {
@@ -481,7 +479,6 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
 
     file_name = malloc((1 + strlen((char*)args[1])) * sizeof(char));
     memcpy(file_name, (char*)args[1], strlen((char*)args[1]) + 1);
-
 
     f->eax = filesys_remove(file_name);
     free(file_name);
@@ -525,11 +522,10 @@ pid_t exec_(const char* cmd_line) {
 
   bundle->cwd_sector = thread_current()->pcb->cwd_sector;
 
-
   strlcpy(bundle->file_name, cmd_line, strlen(cmd_line) + 1);
   pid_t id = thread_create(cmd_line, PRI_DEFAULT, start_process, (void*)bundle);
   if (id == TID_ERROR) {
-    palloc_free_page(bundle->file_name,false);
+    palloc_free_page(bundle->file_name, false);
 
     free(bundle);
     return -1;
@@ -538,7 +534,7 @@ pid_t exec_(const char* cmd_line) {
   bool success = bundle->success;
   pid_t child_pid = bundle->child_pid;
 
-  palloc_free_page(bundle->file_name,false);
+  palloc_free_page(bundle->file_name, false);
   free(bundle);
   if (!success) {
     return -1;
@@ -678,8 +674,9 @@ int fork_(struct intr_frame* f) { //reopen files, copy pagedir and set to COW
 
   sema_init(&child_pcb->sema_exit, 0);
   /*copy pagedir and set flag*/
-  for (uint32_t j = 0, i; i = pd_parent[j], j < pd_no(PHYS_BASE); j++) {
+  for (uint32_t j = 0, i; j < pd_no(PHYS_BASE); j++) {
 
+    i = pd_parent[j];
     if (!(i & PTE_P)) { //not present
       continue;
     }
@@ -690,24 +687,35 @@ int fork_(struct intr_frame* f) { //reopen files, copy pagedir and set to COW
       if (!(pt[m] & PTE_P)) {
         continue;
       }
+      bool was_writable = pt[m] & PTE_W;
+      bool was_cow = pt[m] & PTE_COW;
       void* upage = (void*)((j << PDSHIFT) | (m << PTSHIFT));
       /* LFB 页不是进程内存(物理地址不在 RAM,pte_get_page 的 ptov
          会断言 PANIC),不能拷贝;子进程在循环结束后重新映射一份。
          必须先判断再取页,否则 pte_get_page 就先炸了。 */
       if (upage >= USER_LFB_VA && upage < USER_LFB_VA + VGA_LFB_XRES * VGA_LFB_YRES * 4)
         continue;
+
       uint32_t* page_base = pte_get_page(pt[m]);
-      uint32_t* new_page = palloc_get_page(PAL_USER);
-      if (!new_page) { //should free all pages allocated.
-        file_close_list(&child_pcb->fd_list);
-        pagedir_destroy(pd_child);
-        free(bundle);
-        free(child_f);
-        free(child_pcb);
-        return -1;
+      // uint32_t* new_page = palloc_get_page(PAL_USER);
+      // if (!new_page) { //should free all pages allocated.
+      //   file_close_list(&child_pcb->fd_list);
+      //   pagedir_destroy(pd_child);
+      //   free(bundle);
+      //   free(child_f);
+      //   free(child_pcb);
+      //   return -1;
+      // }
+      // memcpy(ptov((uintptr_t)new_page), page_base, PGSIZE);
+      if(was_writable||was_cow)
+      {
+        pagedir_set_cow_page(pd_child, upage, page_base, false, true);
+        pagedir_set_page_flags(pd_parent, upage, false, true);
+        ref_page((void*)vtop(page_base));
+      } else {
+        pagedir_set_cow_page(pd_child, upage, page_base, false, false);
+        ref_page((void*)vtop(page_base));
       }
-      memcpy(ptov((uintptr_t)new_page), page_base, PGSIZE);
-      pagedir_set_page(pd_child, upage, ptov((uintptr_t)new_page), true, false);
     }
   }
 

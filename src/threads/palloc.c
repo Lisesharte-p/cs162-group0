@@ -41,7 +41,7 @@ static bool page_from_pool(const struct pool*, void* page);
 
 /* Initializes the page allocator.  At most USER_PAGE_LIMIT
    pages are put into the user pool. */
-void palloc_init_kernel(size_t user_page_limit) {
+void palloc_init_kernel(size_t user_page_limit, uint32_t* user_page, uint32_t* user_base) {
   /* Free memory starts at 1 MB and runs to the end of RAM. */
   uint8_t* free_start = (void*)(1024 * 1024);
   // uint8_t* free_end = ptov(init_ram_pages * PGSIZE);
@@ -69,6 +69,9 @@ void palloc_init_kernel(size_t user_page_limit) {
             (free_start) + kernel_pages * PGSIZE +
                 (PGSIZE * (bitmap_page_kernel + bitmap_page_user)),
             user_pages, "user pool", user_bitmap_buf);
+  *user_page = (uint32_t)user_pages;
+  *user_base = (uint32_t)((free_start) + kernel_pages * PGSIZE +
+                          (PGSIZE * (bitmap_page_kernel + bitmap_page_user)));
 }
 void palloc_init_user(size_t user_page_limit) {
   uint8_t* free_start = ptov(1024 * 1024);

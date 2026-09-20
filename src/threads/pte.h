@@ -63,7 +63,7 @@ static inline uintptr_t pd_no(const void* va) { return (uintptr_t)va >> PDSHIFT;
 #define PTE_U 0x4     /* 1=user/kernel, 0=kernel only. */
 #define PTE_A 0x20    /* 1=accessed, 0=not acccessed. */
 #define PTE_D 0x40    /* 1=dirty, 0=not dirty (PTEs only). */
-#define PTE_COW 0x200 /* 1=COW, 0=not COW*/
+#define PTE_COW 0xc00 /* 1=COW, 0=not COW*/
 
 /* Returns a PDE that points to page table PT. */
 static inline uint32_t pde_create(uint32_t* pt) {
@@ -94,9 +94,21 @@ static inline uint32_t pte_create_kernel(void* page, bool writable) {
 static inline uint32_t pte_create_user(void* page, bool writable) {
   return pte_create_kernel(page, writable) | PTE_U;
 }
-static inline uint32_t pte_set_cow(void* page, bool is_cow) {
-  return vtop(page) | (is_cow ? PTE_COW : 0);
+
+static inline uint32_t pte_set_cow(uint32_t pte, bool cow) {
+  if (cow)
+    return pte | PTE_COW;
+  else
+    return pte & ~(uint32_t)PTE_COW;
 }
+
+static inline uint32_t pte_set_writable(uint32_t pte, bool writable) {
+  if (writable)
+    return pte | PTE_W;
+  else
+    return pte & ~(uint32_t)PTE_W;
+}
+
 /* Returns a pointer to the page that page table entry PTE points
    to. */
 static inline void* pte_get_page(uint32_t pte) { return ptov(pte & PTE_ADDR); }

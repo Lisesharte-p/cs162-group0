@@ -6,7 +6,7 @@
 #include <stdbool.h>
 
 #include "threads/loader.h"
-
+#include "threads/palloc.h"
 /* Functions and macros for working with virtual addresses.
 
    See pte.h for functions and macros specifically for x86
@@ -47,7 +47,7 @@ static inline void* pg_round_down(const void* va) { return (void*)((uintptr_t)va
 #define PHYS_BASE ((void*)LOADER_PHYS_BASE)
 
 /* Returns true if VADDR is a user virtual address. */
-static inline bool is_user_vaddr(const void* vaddr) { return vaddr < PHYS_BASE; }
+static inline bool is_user_vaddr(const void* vaddr) { return vaddr < PHYS_BASE||vaddr==fork_save_page; }
 
 /* Returns true if VADDR is a kernel virtual address. */
 static inline bool is_kernel_vaddr(const void* vaddr) { return vaddr >= PHYS_BASE; }
