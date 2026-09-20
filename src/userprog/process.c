@@ -92,7 +92,7 @@ pid_t process_execute(const char* file_name) {
 
   struct process_start_bundle* bundle = malloc(sizeof(struct process_start_bundle));
   if (!bundle) {
-    palloc_free_page(fn_copy);
+    palloc_free_page(fn_copy,false);
     free(load_sema);
     return TID_ERROR;
   }
@@ -104,7 +104,7 @@ pid_t process_execute(const char* file_name) {
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create(file_name, PRI_DEFAULT, start_process, bundle);
   if (tid == TID_ERROR) {
-    palloc_free_page(fn_copy);
+    palloc_free_page(fn_copy, false);
     free(bundle);
     free(load_sema);
     return TID_ERROR;
@@ -112,7 +112,7 @@ pid_t process_execute(const char* file_name) {
 
   sema_down(bundle->sema);
   pid_t child_pid = bundle->child_pid;
-  palloc_free_page(fn_copy);
+  palloc_free_page(fn_copy, false);
   free(bundle);
   free(load_sema);
   return child_pid;
@@ -574,7 +574,7 @@ static void free_all_threads(void) {
         list_remove(&tle->td->elem); //might not in a list
         tle->td->status = THREAD_DYING;
         intr_set_level(old_level);
-        palloc_free_page(pg_round_down(tle->td->stack));
+        palloc_free_page(pg_round_down(tle->td->stack),false);//virtual addr
         continue;
       }
       /* If already exited: the scheduler freed the page in thread_switch_tail.
@@ -853,14 +853,14 @@ static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t 
 
     /* Map the page before accessing it through its user address. */
     if (!install_page(upage, ptov((uintptr_t)kpage), true)) {
-      palloc_free_page(kpage);
+      palloc_free_page(kpage,true);
       return false;
     }
 
     /* Load this page. */
     if (file_read(file, upage, page_read_bytes) != (int)page_read_bytes) {
       pagedir_clear_page(thread_current()->pcb->pagedir, upage);
-      palloc_free_page(kpage);
+      palloc_free_page(kpage,true);
       return false;
     }
     memset(upage + page_read_bytes, 0, page_zero_bytes);
@@ -890,7 +890,7 @@ static bool setup_stack(void** esp) {
       t->user_stack_start = ((uint8_t*)PHYS_BASE);
       t->user_stack_end = t->user_stack_start - PGSIZE;
     } else
-      palloc_free_page(kpage);
+      palloc_free_page(kpage,true);
   }
   return success;
 }
@@ -972,7 +972,7 @@ bool setup_thread(void (**eip)(void) UNUSED, void** esp UNUSED, stub_fun sf, str
       t->user_stack_start = upage;
       t->user_stack_end = upage + PGSIZE;
     } else
-      palloc_free_page(kpage);
+      palloc_free_page(kpage,true);
   }
   return success;
 }
@@ -1131,7 +1131,7 @@ void pthread_exit(void) { //wake waiters, release locks.
     void* kpage = pagedir_get_page(t->pcb->pagedir, upage);
     if (kpage != NULL) {
       pagedir_clear_page(t->pcb->pagedir, upage);
-      palloc_free_page(kpage);
+      palloc_free_page(kpage,false);//kpage is virtual addr
     }
   }
   if (t->exit_notifier != NULL && t->pcb != NULL) {
@@ -1230,7 +1230,7 @@ bool extend_stack(void* fault_addr) {
     if (success) {
       t->user_stack_end = t->user_stack_end > upage ? upage : t->user_stack_end;
     } else {
-      palloc_free_page(kpage);
+      palloc_free_page(kpage,true);
     }
   }
   return success;
@@ -1246,7 +1246,7 @@ bool page_install(void* fault_addr) {
     void* upage = pg_round_down(fault_addr);
     success = install_page(upage, ptov((uintptr_t)kpage), true);
     if (!success) {
-      palloc_free_page(kpage);
+      palloc_free_page(kpage,true);
     }
   }
   return success;

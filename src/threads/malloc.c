@@ -221,13 +221,13 @@ void free(void* p) {
           struct block* b = arena_to_block(a, i);
           list_remove(&b->free_elem);
         }
-        palloc_free_page(a);
+        palloc_free_page(a,false);
       }
 
       lock_release(&d->lock);
     } else {
       /* It's a big block.  Free its pages. */
-      palloc_free_multiple(a, a->free_cnt);
+      palloc_free_multiple(a, a->free_cnt,false);
       return;
     }
   }

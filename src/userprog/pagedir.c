@@ -42,11 +42,11 @@ void pagedir_destroy(uint32_t* pd) {
           void* va = (void*)((pde - pd) << PDSHIFT | (pte - pt) << PTSHIFT);
           if (va >= USER_LFB_VA && va < USER_LFB_VA + VGA_LFB_XRES * VGA_LFB_YRES * 4)
             continue;
-          palloc_free_page(pte_get_page(*pte));
+          palloc_free_page((void*)vtop(pte_get_page(*pte)), true);
         }
-      palloc_free_page(pt);
+      palloc_free_page(pt,false);
     }
-  palloc_free_page(pd);
+  palloc_free_page(pd,false);
 }
 
 /* Returns the address of the page table entry for virtual

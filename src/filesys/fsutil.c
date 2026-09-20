@@ -47,7 +47,7 @@ void fsutil_cat(char** argv) {
 
     hex_dump(pos, buffer, n, true);
   }
-  palloc_free_page(buffer);
+  palloc_free_page(buffer,false);
   file_close(file);
 }
 

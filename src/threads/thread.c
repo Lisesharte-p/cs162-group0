@@ -199,7 +199,7 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
   init_thread(t, name, priority);
   tid = t->tid = allocate_tid();
   if(tid==TID_ERROR){
-    palloc_free_page(t);
+    palloc_free_page(t,false);
     return TID_ERROR;
   }
   /* Stack frame for kernel_thread(). */
@@ -602,7 +602,7 @@ void thread_switch_tail(struct thread* prev) {
     // }
 #endif
     bitmap_reset(tid_bitmap, prev->tid);
-    palloc_free_page(prev);
+    palloc_free_page(prev,false);
   }
 }
 

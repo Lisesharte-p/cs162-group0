@@ -107,7 +107,7 @@ void* palloc_get_multiple(enum palloc_flags flags, size_t page_cnt) {
     pages = NULL;
 
   if (pages != NULL) {
-    if (flags & PAL_ZERO && !(flags & PAL_USER))
+    if (flags & PAL_ZERO && !(flags & PAL_USER))//if user pool, clear after mapping
       memset(pages, 0, PGSIZE * page_cnt);
   } else {
     if (flags & PAL_ASSERT)
@@ -127,7 +127,7 @@ void* palloc_get_multiple(enum palloc_flags flags, size_t page_cnt) {
 void* palloc_get_page(enum palloc_flags flags) { return palloc_get_multiple(flags, 1); }
 
 /* Frees the PAGE_CNT pages starting at PAGES. */
-void palloc_free_multiple(void* pages, size_t page_cnt) {
+void palloc_free_multiple(void* pages, size_t page_cnt, bool phy_addr) {
   struct pool* pool;
   size_t page_idx;
 
@@ -135,27 +135,30 @@ void palloc_free_multiple(void* pages, size_t page_cnt) {
   if (pages == NULL || page_cnt == 0)
     return;
 
-  if (page_from_pool(&kernel_pool, pages)) {
-    pool = &kernel_pool;
-    page_idx = pg_no(pages) - pg_no(pool->base);
-  } else if (page_from_pool(&user_pool, (void*)((uintptr_t)pages - (uintptr_t)PHYS_BASE))) {
-    pool = &user_pool;
-    page_idx = pg_no((void*)((uintptr_t)pages - (uintptr_t)PHYS_BASE)) - pg_no(pool->base);
-  } else
-    NOT_REACHED();
+  if (phy_addr) {
+    if (page_from_pool(&user_pool, pages)) {
+      pool = &user_pool;
+      page_idx = pg_no(pages) - pg_no(pool->base);
 
-  
+    } else
+      NOT_REACHED();
+  } else {
+    if (page_from_pool(&kernel_pool, pages)) {
+      pool = &kernel_pool;
+      page_idx = pg_no(pages) - pg_no(pool->base);
 
-#ifndef NDEBUG
-  memset(pages, 0xcc, PGSIZE * page_cnt);
-#endif
+    } else
+      NOT_REACHED();
+  }
+
+
 
   ASSERT(bitmap_all(pool->used_map, page_idx, page_cnt));
   bitmap_set_multiple(pool->used_map, page_idx, page_cnt, false);
 }
 
 /* Frees the page at PAGE. */
-void palloc_free_page(void* page) { palloc_free_multiple(page, 1); }
+void palloc_free_page(void* page, bool phy_addr) { palloc_free_multiple(page, 1, phy_addr); }
 
 /* Initializes pool P as starting at START and ending at END,
    naming it NAME for debugging purposes. */

@@ -161,7 +161,7 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
 
     if (!file_new) {
  
-      palloc_free_page(file_name);
+      palloc_free_page(file_name,false);
       f->eax = -1;
       return;
     }
@@ -172,7 +172,7 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     bool success = add_file_descriptor(file_list, file_new, new_fd,file_new->is_dir);
 
     f->eax = new_fd;
-    palloc_free_page(file_name);
+    palloc_free_page(file_name,false);
     if (!success) {
       file_close(file_new);
       f->eax = -1;
@@ -251,7 +251,7 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
 
     bool success = filesys_create(file_name, args[2]);
     f->eax = 1;
-    palloc_free_page(file_name);
+    palloc_free_page(file_name,false);
     if (!success) {
       f->eax = 0;
     }
@@ -529,7 +529,7 @@ pid_t exec_(const char* cmd_line) {
   strlcpy(bundle->file_name, cmd_line, strlen(cmd_line) + 1);
   pid_t id = thread_create(cmd_line, PRI_DEFAULT, start_process, (void*)bundle);
   if (id == TID_ERROR) {
-    palloc_free_page(bundle->file_name);
+    palloc_free_page(bundle->file_name,false);
 
     free(bundle);
     return -1;
@@ -538,7 +538,7 @@ pid_t exec_(const char* cmd_line) {
   bool success = bundle->success;
   pid_t child_pid = bundle->child_pid;
 
-  palloc_free_page(bundle->file_name);
+  palloc_free_page(bundle->file_name,false);
   free(bundle);
   if (!success) {
     return -1;
