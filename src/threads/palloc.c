@@ -44,9 +44,9 @@ static bool page_from_pool(const struct pool*, void* page);
 void palloc_init_kernel(size_t user_page_limit, uint32_t* user_page, uint32_t* user_base) {
   /* Free memory starts at 1 MB and runs to the end of RAM. */
   uint8_t* free_start = (void*)(1024 * 1024);
-  // uint8_t* free_end = ptov(init_ram_pages * PGSIZE);
-  uint8_t* free_end = (void*)(init_ram_pages * PGSIZE);
-  size_t free_pages = (free_end - free_start) / PGSIZE;
+  const size_t reserved_pages = (1024 * 1024) / PGSIZE;
+  size_t free_pages =
+      init_ram_pages > reserved_pages ? (size_t)init_ram_pages - reserved_pages : 0;
   size_t user_pages = free_pages / 2;
   size_t kernel_pages;
   if (user_pages > user_page_limit)
@@ -74,10 +74,9 @@ void palloc_init_kernel(size_t user_page_limit, uint32_t* user_page, uint32_t* u
                           (PGSIZE * (bitmap_page_kernel + bitmap_page_user)));
 }
 void palloc_init_user(size_t user_page_limit) {
-  uint8_t* free_start = ptov(1024 * 1024);
-  // uint8_t* free_end = ptov(init_ram_pages * PGSIZE);
-  uint8_t* free_end = ptov(init_ram_pages * PGSIZE);
-  size_t free_pages = (free_end - free_start) / PGSIZE;
+  const size_t reserved_pages = (1024 * 1024) / PGSIZE;
+  size_t free_pages =
+      init_ram_pages > reserved_pages ? (size_t)init_ram_pages - reserved_pages : 0;
   size_t user_pages = free_pages / 2;
   size_t kernel_pages;
   if (user_pages > user_page_limit)

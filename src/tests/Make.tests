@@ -69,7 +69,7 @@ VERBOSE =
 # Use rukt/rtkt to run kernel-only tests for userprog/threads, respectively
 RUNCMD = run
 
-TESTCMD = pintos -v -k $(if ${PINTOS_DEBUG},--gdb,-T $(TIMEOUT)) -m 2048
+TESTCMD = pintos -v -k $(if ${PINTOS_DEBUG},--gdb,-T $(TIMEOUT)) -m 4096
 TESTCMD += $(or ${FORCE_SIMULATOR},$(SIMULATOR))
 TESTCMD += $(PINTOSOPTS)
 ifeq ($(filter userprog, $(KERNEL_SUBDIRS)), userprog)

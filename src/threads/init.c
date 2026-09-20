@@ -42,7 +42,7 @@
 #include "filesys/buffer_cache.h"
 #endif
 #include "vm/vm.h"
-#define max_kernel_pages 262144
+
 /* Page directory with kernel mappings only. */
 uint32_t* init_page_dir;
 uint32_t total_phy_pages;
