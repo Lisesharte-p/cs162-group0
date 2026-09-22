@@ -28,4 +28,8 @@ void pagedir_set_accessed(uint32_t* pd, const void* upage, bool accessed);
 void pagedir_activate(uint32_t* pd);
 uint32_t* active_pd(void);
 bool page_is_cow(uint32_t* pd, const void* upage);
+bool pagedir_is_user(uint32_t* pd, const void* vpage);
+bool pagedir_is_swapped(uint32_t* pd, const void* vpage);
+void pagedir_resume_swapped(uint32_t* pd, void* upage, void* kapge);
+void pagedir_set_swapped(uint32_t* pd, const void* vpage, bool swapped);
 #endif /* userprog/pagedir.h */

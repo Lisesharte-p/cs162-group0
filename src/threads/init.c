@@ -110,7 +110,7 @@ int main(void) {
   malloc_init();
   paging_init();
   // palloc_init_user(user_page_limit);
-  vm_init(user_page, (uint8_t*)user_base);
+
   /* Segmentation. */
 #ifdef USERPROG
   tss_init();
@@ -159,7 +159,7 @@ int main(void) {
   filesys_init(format_filesys);
 
 #endif
-
+  vm_init(user_page, (uint8_t*)user_base);
   printf("Boot complete.\n");
 
   /* Run actions specified on kernel command line. */

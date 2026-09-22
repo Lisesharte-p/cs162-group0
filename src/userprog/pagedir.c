@@ -264,6 +264,27 @@ bool pagedir_is_dirty(uint32_t* pd, const void* vpage) {
   return pte != NULL && (*pte & PTE_D) != 0;
 }
 
+bool pagedir_is_swapped(uint32_t* pd, const void* vpage) {
+  uint32_t* pte = lookup_page(pd, vpage, false);
+  return pte != NULL && (*pte & PTE_SWAPPED) != 0;
+}
+
+bool pagedir_is_user(uint32_t* pd, const void* vpage) {
+  uint32_t* pte = lookup_page(pd, vpage, false);
+  return pte != NULL && (*pte & PTE_U) != 0;
+}
+bool pagedir_is_writable(uint32_t* pd, const void* vpage) {
+  uint32_t* pte = lookup_page(pd, vpage, false);
+  return pte != NULL && (*pte & PTE_W) != 0;
+}
+bool pagedir_is_cow(uint32_t* pd, const void* vpage) {
+  uint32_t* pte = lookup_page(pd, vpage, false);
+  return pte != NULL && (*pte & PTE_COW) != 0;
+}
+uint32_t* pagedir_get_flags(uint32_t* pd, const void* vpage) {
+  uint32_t* pte = lookup_page(pd, vpage, false);
+  return (void*)(*pte & PTE_FLAGS);
+}
 /* Set the dirty bit to DIRTY in the PTE for virtual page VPAGE
    in PD. */
 void pagedir_set_dirty(uint32_t* pd, const void* vpage, bool dirty) {
@@ -277,7 +298,17 @@ void pagedir_set_dirty(uint32_t* pd, const void* vpage, bool dirty) {
     }
   }
 }
-
+void pagedir_set_swapped(uint32_t* pd, const void* vpage, bool swapped) {
+  uint32_t* pte = lookup_page(pd, vpage, false);
+  if (pte != NULL) {
+    if (swapped)
+      *pte |= PTE_SWAPPED;
+    else {
+      *pte &= ~(uint32_t)PTE_SWAPPED;
+      invalidate_pagedir(pd);
+    }
+  }
+}
 /* Returns true if the PTE for virtual page VPAGE in PD has been
    accessed recently, that is, between the time the PTE was
    installed and the last time it was cleared.  Returns false if
@@ -340,4 +371,13 @@ static void invalidate_pagedir(uint32_t* pd) {
          "Translation Lookaside Buffers (TLBs)". */
     pagedir_activate(pd);
   }
+}
+
+void pagedir_resume_swapped(uint32_t* pd, void* upage, void* kpage){
+  
+  uint32_t* flags = pagedir_get_flags(pd, upage);
+  pagedir_set_page(pd, upage, kpage, (uint32_t)flags & PTE_W, (uint32_t)flags & PTE_COW);
+  uint32_t* pte = lookup_page(pd, upage, false);
+
+  pagedir_set_swapped(pd, upage, false);
 }

@@ -101,9 +101,18 @@ static bool handle_cow(void* fault_addr) {
   ref_cnt_remove((void*)old_phys);
   return true;
 }
+static bool handle_swap(void* fault_addr){
+  uint32_t* pd = thread_current()->pcb->pagedir;
+  void* upage = pg_round_down(fault_addr);
+  if (!pagedir_is_swapped(pd, upage)) {
+    return false;
+  }
 
-/* Handler for an exception (probably) caused by a user process. */
-static void kill(struct intr_frame* f) {
+  free_swap_page(upage);
+  return true;
+}
+    /* Handler for an exception (probably) caused by a user process. */
+    static void kill(struct intr_frame* f) {
   /* This interrupt is one (probably) caused by a user process.
      For example, the process might have tried to access unmapped
      virtual memory (a page fault).  For now, we simply kill the
