@@ -63,7 +63,7 @@ static inline uintptr_t pd_no(const void* va) { return (uintptr_t)va >> PDSHIFT;
 #define PTE_U 0x4     /* 1=user/kernel, 0=kernel only. */
 #define PTE_A 0x20    /* 1=accessed, 0=not acccessed. */
 #define PTE_D 0x40    /* 1=dirty, 0=not dirty (PTEs only). */
-#define PTE_COW 0xc00 /* 1=COW, 0=not COW*/
+#define PTE_COW 0x400 /* 1=COW, 0=not COW*/
 #define PTE_SWAPPED 0x800 /* 1=swapped, 0=not swapped*/
 
 /* Returns a PDE that points to page table PT. */

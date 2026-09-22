@@ -10,6 +10,13 @@
 #include "threads/loader.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#ifdef VM
+#include "lib/random.h"
+#include "threads/pte.h"
+#include "userprog/pagedir.h"
+#include "userprog/process.h"
+#include "vm/vm.h"
+#endif
 
 /* Page allocator.  Hands out memory in page-size (or
    page-multiple) chunks.  See malloc.h for an allocator that
@@ -39,14 +46,55 @@ static void init_pool(struct pool*, void* base, size_t page_cnt, const char* nam
                       void* bitmap_buf);
 static bool page_from_pool(const struct pool*, void* page);
 
+#ifdef VM
+/* Chooses one resident, non-COW user page in the current address space and
+   writes it to swap.  Reservoir sampling avoids maintaining a second list of
+   mapped pages just for eviction. */
+static bool swap_random_user_page(void) {
+  struct thread* t = thread_current();
+  uint32_t* pd;
+  uint32_t* selected = NULL;
+  size_t candidates = 0;
+
+  if (t->pcb == NULL || (pd = t->pcb->pagedir) == NULL)
+    return false;
+
+  for (uint32_t* pde = pd; pde < pd + pd_no(PHYS_BASE); pde++) {
+    if ((*pde & PTE_P) == 0)
+      continue;
+
+    uint32_t* pt = pde_get_pt(*pde);
+    for (uint32_t* pte = pt; pte < pt + PGSIZE / sizeof *pte; pte++) {
+      if ((*pte & (PTE_P | PTE_U | PTE_COW)) != (PTE_P | PTE_U))
+        continue;
+      /* pte_get_page() is only valid for RAM-backed physical addresses;
+         user LFB mappings live in the PCI address hole. */
+      if ((*pte & PTE_ADDR) >= (uintptr_t)PHYS_BASE)
+        continue;
+
+      void* page = pte_get_page(*pte);
+      if (!page_from_pool(&user_pool, (void*)vtop(page)))
+        continue;
+
+      candidates++;
+      if (random_ulong() % candidates == 0)
+        selected = (uint32_t*)((pde - pd) << PDSHIFT | (pte - pt) << PTSHIFT);
+    }
+  }
+
+  return selected != NULL && do_swap_page(pd, selected);
+}
+#else
+static bool swap_random_user_page(void) { return false; }
+#endif
+
 /* Initializes the page allocator.  At most USER_PAGE_LIMIT
    pages are put into the user pool. */
 void palloc_init_kernel(size_t user_page_limit, uint32_t* user_page, uint32_t* user_base) {
   /* Free memory starts at 1 MB and runs to the end of RAM. */
   uint8_t* free_start = (void*)(1024 * 1024);
   const size_t reserved_pages = (1024 * 1024) / PGSIZE;
-  size_t free_pages =
-      init_ram_pages > reserved_pages ? (size_t)init_ram_pages - reserved_pages : 0;
+  size_t free_pages = init_ram_pages > reserved_pages ? (size_t)init_ram_pages - reserved_pages : 0;
   size_t user_pages = free_pages / 2;
   size_t kernel_pages;
   if (user_pages > user_page_limit)
@@ -65,18 +113,19 @@ void palloc_init_kernel(size_t user_page_limit, uint32_t* user_page, uint32_t* u
   init_pool(&kernel_pool,
             (ptov)((uintptr_t)free_start) + (PGSIZE * (bitmap_page_kernel + bitmap_page_user)),
             kernel_pages, "kernel pool", kernel_bitmap_buf);
+
   init_pool(&user_pool,
             (free_start) + kernel_pages * PGSIZE +
-                (PGSIZE * (bitmap_page_kernel + bitmap_page_user)),
+                (PGSIZE * bitmap_page_user),
             user_pages, "user pool", user_bitmap_buf);
+
   *user_page = (uint32_t)user_pages;
   *user_base = (uint32_t)((free_start) + kernel_pages * PGSIZE +
-                          (PGSIZE * (bitmap_page_kernel + bitmap_page_user)));
+                          (PGSIZE * bitmap_page_user));
 }
 void palloc_init_user(size_t user_page_limit) {
   const size_t reserved_pages = (1024 * 1024) / PGSIZE;
-  size_t free_pages =
-      init_ram_pages > reserved_pages ? (size_t)init_ram_pages - reserved_pages : 0;
+  size_t free_pages = init_ram_pages > reserved_pages ? (size_t)init_ram_pages - reserved_pages : 0;
   size_t user_pages = free_pages / 2;
   size_t kernel_pages;
   if (user_pages > user_page_limit)
@@ -105,11 +154,16 @@ void* palloc_get_multiple(enum palloc_flags flags, size_t page_cnt) {
 
   if (page_idx != BITMAP_ERROR)
     pages = pool->base + PGSIZE * page_idx;
-  else
+  else if ((flags & PAL_USER) && page_cnt == 1 && swap_random_user_page()) {
+    lock_acquire(&pool->lock);
+    page_idx = bitmap_scan_and_flip(pool->used_map, 0, page_cnt, false);
+    lock_release(&pool->lock);
+    pages = page_idx != BITMAP_ERROR ? pool->base + PGSIZE * page_idx : NULL;
+  } else
     pages = NULL;
 
   if (pages != NULL) {
-    if (flags & PAL_ZERO && !(flags & PAL_USER))//if user pool, clear after mapping
+    if (flags & PAL_ZERO && !(flags & PAL_USER)) //if user pool, clear after mapping
       memset(pages, 0, PGSIZE * page_cnt);
   } else {
     if (flags & PAL_ASSERT)
@@ -152,8 +206,6 @@ void palloc_free_multiple(void* pages, size_t page_cnt, bool phy_addr) {
     } else
       NOT_REACHED();
   }
-
-
 
   ASSERT(bitmap_all(pool->used_map, page_idx, page_cnt));
   bitmap_set_multiple(pool->used_map, page_idx, page_cnt, false);

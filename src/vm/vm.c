@@ -9,6 +9,8 @@
 #include "threads/thread.h"
 #include "threads/palloc.h"
 
+#define SWAP_SECTORS_PER_PAGE (PGSIZE / BLOCK_SECTOR_SIZE)
+
 uint8_t* page_ref_count;
 uint8_t* user_pool_base;
 struct bitmap* swap_use_map;
@@ -23,9 +25,10 @@ bool vm_init(uint32_t user_pages, uint8_t* base) {
   if (!swap_block) {
     PANIC("swap block not found\n");
   }
-  swap_map_buf = malloc(block_size(swap_block) / 8 / 4); //1 page uses 4 sectors
-  swap_use_map = bitmap_create_in_buf(block_size(swap_block) / 4 / 8, swap_map_buf,
-                                      block_size(swap_block) / 4);
+  size_t swap_pages = block_size(swap_block) / SWAP_SECTORS_PER_PAGE;
+  swap_map_buf = malloc(bitmap_buf_size(swap_pages));
+  swap_use_map = bitmap_create_in_buf(swap_pages, swap_map_buf,
+                                      bitmap_buf_size(swap_pages));
 
   return true;
 }
@@ -44,7 +47,6 @@ uint8_t ref_cnt(void* page) { //takes physical addr
 }
 
 uint8_t ref_page(void* page) {
-  ASSERT(!pagedir_is_swapped(thread_current()->pcb->pagedir, upage)); //only ref in memory page
   page_ref_count[((uintptr_t)page - (uintptr_t)user_pool_base) >> 12]++;
   return page_ref_count[((uintptr_t)page - (uintptr_t)user_pool_base) >> 12];
 }
@@ -57,27 +59,47 @@ void free_swap_page(uint32_t* upage) {
   uint32_t* pd = thread_current()->pcb->pagedir;
   ASSERT(pagedir_is_swapped(pd, upage));
   ASSERT(pagedir_is_user(pd, upage));
-  uint32_t paddr = pagedir_get_physical_page(pd, upage);
-  ASSERT(paddr != NULL);
-  ASSERT(bitmap_test(swap_use_map, paddr >> 12) == true);
-  bitmap_flip(swap_use_map, paddr >> 12);
+  uint32_t slot = pagedir_get_swap_slot(pd, upage);
+  ASSERT(bitmap_test(swap_use_map, slot));
   uint32_t* page = palloc_get_page(PAL_USER);
-  pagedir_resume_swapped(pd, upage, ptov((uintptr_t)page));
-  for (int i = 0; i < 4; ++i) {
-    block_read(swap_block, ((paddr >> 12) << 2) + i, upage + i * 512);
+  if (page == NULL)
+    PANIC("unable to allocate page for swap-in");
+  void* kpage = ptov((uintptr_t)page);
+  for (size_t i = 0; i < SWAP_SECTORS_PER_PAGE; ++i) {
+    block_read(swap_block, slot * SWAP_SECTORS_PER_PAGE + i,
+               (uint8_t*)kpage + i * BLOCK_SECTOR_SIZE);
   }
+  pagedir_resume_swapped(pd, upage, kpage);
+  bitmap_flip(swap_use_map, slot);
 }
 
-bool do_swap(uint32_t* upage) {
-  uint32_t* pd = thread_current()->pcb->pagedir;
+void free_swap_slot(uint32_t slot) {
+  ASSERT(swap_use_map != NULL);
+  ASSERT(slot < bitmap_size(swap_use_map));
+  if (bitmap_test(swap_use_map, slot))
+    bitmap_flip(swap_use_map, slot);
+}
+
+bool do_swap_page(uint32_t* pd, uint32_t* upage) {
   ASSERT(!pagedir_is_swapped(pd, upage));
   ASSERT(pagedir_is_user(pd, upage));
   uint32_t paddr = pagedir_get_physical_page(pd, upage);
-  ASSERT(paddr != NULL);
+  ASSERT(paddr != 0);
+  void* kpage = pagedir_get_page(pd, upage);
+  ASSERT(kpage != NULL);
   uint32_t idx = alloc_swap_page();
-  for (int i = 0; i < 4; ++i) {
-    block_write(swap_block, (idx << 2 )+ i, upage + i * 512);
+  for (size_t i = 0; i < SWAP_SECTORS_PER_PAGE; ++i) {
+    block_write(swap_block, idx * SWAP_SECTORS_PER_PAGE + i,
+                (uint8_t*)kpage + i * BLOCK_SECTOR_SIZE);
   }
-  pagedir_set_swapped(pd, upage,true);
+  ASSERT(pagedir_set_swap_slot(pd, upage, idx));
+  if (ref_cnt((void*)paddr) != 0)
+    ref_cnt_remove((void*)paddr);
+  else
+    palloc_free_page((void*)paddr, true);
   return true;
+}
+
+bool do_swap(uint32_t* upage) {
+  return do_swap_page(thread_current()->pcb->pagedir, upage);
 }

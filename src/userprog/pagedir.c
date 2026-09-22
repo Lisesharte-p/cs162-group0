@@ -43,7 +43,11 @@ void pagedir_destroy(uint32_t* pd) {
       uint32_t* pt = pde_get_pt(*pde);
       uint32_t* pte;
 
-      for (pte = pt; pte < pt + PGSIZE / sizeof *pte; pte++)
+      for (pte = pt; pte < pt + PGSIZE / sizeof *pte; pte++) {
+        if (*pte & PTE_SWAPPED) {
+          free_swap_slot((uint32_t)((*pte & PTE_ADDR) >> PTSHIFT));
+          continue;
+        }
         if (*pte & PTE_P) {
           /* LFB 页不是 palloc 分配的内存(物理地址是 PCI 空洞里的
              显存),ptov 会断言,不能释放。 */
@@ -56,6 +60,7 @@ void pagedir_destroy(uint32_t* pd) {
           else
             palloc_free_page(page, true);
         }
+      }
       palloc_free_page(pt,false);
     }
   palloc_free_page(pd,false);
@@ -269,6 +274,21 @@ bool pagedir_is_swapped(uint32_t* pd, const void* vpage) {
   return pte != NULL && (*pte & PTE_SWAPPED) != 0;
 }
 
+uintptr_t pagedir_get_swap_slot(uint32_t* pd, const void* vpage) {
+  uint32_t* pte = lookup_page(pd, vpage, false);
+  return pte != NULL && (*pte & PTE_SWAPPED) ? (*pte & PTE_ADDR) >> PTSHIFT : 0;
+}
+
+bool pagedir_set_swap_slot(uint32_t* pd, const void* vpage, uintptr_t slot) {
+  uint32_t* pte = lookup_page(pd, vpage, false);
+  if (pte == NULL || (*pte & PTE_U) == 0 || slot > (PTE_ADDR >> PTSHIFT))
+    return false;
+
+  *pte = (*pte & PTE_FLAGS & ~PTE_P) | ((uint32_t)slot << PTSHIFT) | PTE_SWAPPED;
+  invalidate_pagedir(pd);
+  return true;
+}
+
 bool pagedir_is_user(uint32_t* pd, const void* vpage) {
   uint32_t* pte = lookup_page(pd, vpage, false);
   return pte != NULL && (*pte & PTE_U) != 0;
@@ -281,9 +301,9 @@ bool pagedir_is_cow(uint32_t* pd, const void* vpage) {
   uint32_t* pte = lookup_page(pd, vpage, false);
   return pte != NULL && (*pte & PTE_COW) != 0;
 }
-uint32_t* pagedir_get_flags(uint32_t* pd, const void* vpage) {
+uint32_t pagedir_get_flags(uint32_t* pd, const void* vpage) {
   uint32_t* pte = lookup_page(pd, vpage, false);
-  return (void*)(*pte & PTE_FLAGS);
+  return pte == NULL ? 0 : *pte & PTE_FLAGS;
 }
 /* Set the dirty bit to DIRTY in the PTE for virtual page VPAGE
    in PD. */
@@ -302,7 +322,7 @@ void pagedir_set_swapped(uint32_t* pd, const void* vpage, bool swapped) {
   uint32_t* pte = lookup_page(pd, vpage, false);
   if (pte != NULL) {
     if (swapped)
-      *pte |= PTE_SWAPPED;
+      *pte = (*pte & ~(uint32_t)PTE_P) | PTE_SWAPPED;
     else {
       *pte &= ~(uint32_t)PTE_SWAPPED;
       invalidate_pagedir(pd);
@@ -374,10 +394,8 @@ static void invalidate_pagedir(uint32_t* pd) {
 }
 
 void pagedir_resume_swapped(uint32_t* pd, void* upage, void* kpage){
-  
-  uint32_t* flags = pagedir_get_flags(pd, upage);
-  pagedir_set_page(pd, upage, kpage, (uint32_t)flags & PTE_W, (uint32_t)flags & PTE_COW);
-  uint32_t* pte = lookup_page(pd, upage, false);
-
-  pagedir_set_swapped(pd, upage, false);
+  uint32_t flags = pagedir_get_flags(pd, upage);
+  ASSERT((flags & PTE_SWAPPED) != 0);
+  ASSERT(pagedir_set_page(pd, upage, kpage, (flags & PTE_W) != 0,
+                          (flags & PTE_COW) != 0));
 }

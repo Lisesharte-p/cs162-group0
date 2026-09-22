@@ -16,8 +16,10 @@ uint8_t ref_page(void* page);
 uint8_t ref_cnt_remove(void* page);
 
 void free_swap_page(uint32_t* page);
+void free_swap_slot(uint32_t slot);
 
 bool do_swap(uint32_t* upage);
+bool do_swap_page(uint32_t* pd, uint32_t* upage);
 
 
 #endif

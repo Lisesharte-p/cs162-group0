@@ -852,7 +852,6 @@ static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t 
       return false;
 
     /* Map the page before accessing it through its user address. */
-    printf("%x\n",kpage);
     if (!install_page(upage, ptov((uintptr_t)kpage), true)) {
       palloc_free_page(kpage,true);
       return false;

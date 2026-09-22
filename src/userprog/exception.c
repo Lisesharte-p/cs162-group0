@@ -188,6 +188,9 @@ static void page_fault(struct intr_frame* f) {
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
+  if (not_present && is_user_vaddr(fault_addr) && handle_swap(fault_addr))
+    return;
+
   //stack growth
   if (addr_in_stack(fault_addr) &&
       ((user && f->esp - 1024 < fault_addr) ||
