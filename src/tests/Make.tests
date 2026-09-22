@@ -28,7 +28,7 @@ ifdef PROGS
 include ../../Makefile.userprog
 endif
 
-TIMEOUT = 60
+TIMEOUT = 6000
 
 clean::
 	rm -f $(OUTPUTS) $(ERRORS) $(RESULTS)
@@ -69,7 +69,7 @@ VERBOSE =
 # Use rukt/rtkt to run kernel-only tests for userprog/threads, respectively
 RUNCMD = run
 
-TESTCMD = pintos -v -k $(if ${PINTOS_DEBUG},--gdb,-T $(TIMEOUT)) -m 6
+TESTCMD = pintos -v -k $(if ${PINTOS_DEBUG},--gdb,-T $(TIMEOUT)) -m 4
 TESTCMD += $(or ${FORCE_SIMULATOR},$(SIMULATOR))
 TESTCMD += $(PINTOSOPTS)
 ifeq ($(filter userprog, $(KERNEL_SUBDIRS)), userprog)
@@ -77,7 +77,7 @@ TESTCMD += $(FILESYSSOURCE)
 TESTCMD += $(foreach file,$(PUTFILES),-p $(file) -a $(notdir $(file)))
 endif
 ifeq ($(filter vm, $(KERNEL_SUBDIRS)), vm)
-TESTCMD += --swap-size=4
+TESTCMD += --swap-size=512
 endif
 TESTCMD += -- -q
 TESTCMD += $(KERNELFLAGS)

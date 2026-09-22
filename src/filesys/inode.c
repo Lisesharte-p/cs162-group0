@@ -367,10 +367,13 @@ off_t inode_read_at(struct inode* inode, void* buffer_, off_t size, off_t offset
   while (size > 0) {
     /* Disk sector to read, starting byte offset within sector. */
     block_sector_t sector_idx = byte_to_sector(inode, offset);
-    if (sector_idx == -1) {
-      lock_release(&inode->lock);
-      return 0;
-    }
+    /* -1 means "no data at OFFSET", i.e. we ran off the end of the file.  Stop
+       and report what we already copied: returning 0 here throws away the whole
+       read whenever SIZE reaches past EOF, so reading a short file into a big
+       buffer (child-sort reads 128 kB out of a 63 kB file) silently yields
+       nothing and the caller sees a 0-byte read. */
+    if (sector_idx == -1)
+      break;
     int sector_ofs = offset % BLOCK_SECTOR_SIZE;
 
     /* Bytes left in inode, bytes left in sector, lesser of the two. */

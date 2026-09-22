@@ -8,7 +8,7 @@
 #include "threads/pte.h"
 #include "threads/thread.h"
 #include "threads/palloc.h"
-
+#include "stdio.h"
 #define SWAP_SECTORS_PER_PAGE (PGSIZE / BLOCK_SECTOR_SIZE)
 
 uint8_t* page_ref_count;
@@ -56,6 +56,7 @@ uint8_t ref_cnt_remove(void* page) {
   return page_ref_count[((uintptr_t)page - (uintptr_t)user_pool_base) >> 12];
 }
 void free_swap_page(uint32_t* upage) {
+  // printf("swap in %x\n", upage);
   uint32_t* pd = thread_current()->pcb->pagedir;
   ASSERT(pagedir_is_swapped(pd, upage));
   ASSERT(pagedir_is_user(pd, upage));
@@ -81,6 +82,7 @@ void free_swap_slot(uint32_t slot) {
 }
 
 bool do_swap_page(uint32_t* pd, uint32_t* upage) {
+  // printf("swap out %x\n", upage);
   ASSERT(!pagedir_is_swapped(pd, upage));
   ASSERT(pagedir_is_user(pd, upage));
   uint32_t paddr = pagedir_get_physical_page(pd, upage);
@@ -88,11 +90,18 @@ bool do_swap_page(uint32_t* pd, uint32_t* upage) {
   void* kpage = pagedir_get_page(pd, upage);
   ASSERT(kpage != NULL);
   uint32_t idx = alloc_swap_page();
+  /* Claim the victim before the disk write.  block_write() blocks, and while it
+     does another thread that finds the user pool full enters
+     swap_random_user_page() too.  As long as this PTE is still present it can
+     pick the very same victim, swap it out and free its frame; when we wake up
+     we then free that frame a second time and it gets handed out to two
+     processes at once.  Marking the PTE swapped first makes the page invisible
+     to choose_swap_page() (it requires PTE_P), so the victim cannot be stolen. */
+  ASSERT(pagedir_set_swap_slot(pd, upage, idx));
   for (size_t i = 0; i < SWAP_SECTORS_PER_PAGE; ++i) {
     block_write(swap_block, idx * SWAP_SECTORS_PER_PAGE + i,
                 (uint8_t*)kpage + i * BLOCK_SECTOR_SIZE);
   }
-  ASSERT(pagedir_set_swap_slot(pd, upage, idx));
   if (ref_cnt((void*)paddr) != 0)
     ref_cnt_remove((void*)paddr);
   else
@@ -101,5 +110,6 @@ bool do_swap_page(uint32_t* pd, uint32_t* upage) {
 }
 
 bool do_swap(uint32_t* upage) {
+
   return do_swap_page(thread_current()->pcb->pagedir, upage);
 }

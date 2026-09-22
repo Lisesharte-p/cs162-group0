@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "threads/loader.h"
+#include "threads/interrupt.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
 #ifdef VM
@@ -49,15 +50,26 @@ static bool page_from_pool(const struct pool*, void* page);
 #ifdef VM
 /* Chooses one resident, non-COW user page in the current address space and
    writes it to swap.  Reservoir sampling avoids maintaining a second list of
-   mapped pages just for eviction. */
-static bool swap_random_user_page(void) {
-  struct thread* t = thread_current();
+   mapped pages just for eviction.  A page can belong to any live process:
+   when one process faults in a page, its own resident set may be the complete
+   working set that it is actively using, while another process is blocked in
+   wait() and is a much better eviction candidate. */
+struct swap_candidate {
   uint32_t* pd;
-  uint32_t* selected = NULL;
-  size_t candidates = 0;
+  uint32_t* upage;
+  uint32_t* current_pd;
+  struct thread* owner;
+  size_t owner_pages;
+  int rank;
+};
+
+static void find_swap_candidate(struct thread* t, void* aux) {
+  struct swap_candidate* candidate = aux;
+  uint32_t* pd;
+  size_t pages = 0;
 
   if (t->pcb == NULL || (pd = t->pcb->pagedir) == NULL)
-    return false;
+    return;
 
   for (uint32_t* pde = pd; pde < pd + pd_no(PHYS_BASE); pde++) {
     if ((*pde & PTE_P) == 0)
@@ -76,13 +88,100 @@ static bool swap_random_user_page(void) {
       if (!page_from_pool(&user_pool, (void*)vtop(page)))
         continue;
 
-      candidates++;
-      if (random_ulong() % candidates == 0)
-        selected = (uint32_t*)((pde - pd) << PDSHIFT | (pte - pt) << PTSHIFT);
+      pages++;
     }
   }
 
-  return selected != NULL && do_swap_page(pd, selected);
+  int process_rank = pd == candidate->current_pd ? 2 : (t->status == THREAD_RUNNING ? 1 : 0);
+  /* "Nothing chosen yet" must be tested on owner, not upage: upage is only
+     filled in later by choose_swap_page(), so testing it here is always true
+     and the whole ranking below is skipped -- the last thread in all_list
+     always won and a running process ended up evicting its own pages. */
+  if (pages > 0 &&
+      (candidate->owner == NULL || process_rank < candidate->rank ||
+       (process_rank == candidate->rank && pages > candidate->owner_pages))) {
+    candidate->pd = pd;
+    candidate->owner = t;
+    candidate->owner_pages = pages;
+    candidate->rank = process_rank;
+    candidate->upage = NULL;
+  }
+}
+
+/* Picks the victim uniformly at random among the pages resident in the chosen
+   address space.  Any deterministic rule -- scanning from the bottom of the
+   address space, or a clock hand -- keeps landing on the same few frames: the
+   process refaults on the victim immediately, it is swapped back in, and the
+   next eviction picks it again, so a handful of pages ping-pong forever while
+   the rest of the resident set is never evicted.  Picking uniformly at random
+   spreads evictions over every resident page.  Reservoir sampling does this in
+   a single page-table walk, with no second list of mapped pages. */
+static void choose_swap_page(struct thread* t, void* aux) {
+  struct swap_candidate* candidate = aux;
+  if (t != candidate->owner)
+    return;
+
+  uint32_t* pd = candidate->pd;
+  const size_t per_pt = PGSIZE / sizeof(uint32_t);
+  const size_t npde = pd_no(PHYS_BASE);
+
+  uintptr_t chosen = 0;
+  size_t candidates = 0;
+  for (size_t pi = 0; pi < npde; pi++) {
+    uint32_t* pde = pd + pi;
+    if ((*pde & PTE_P) == 0)
+      continue; /* whole 4 MB region unmapped: skip it in one step */
+    uint32_t* pt = pde_get_pt(*pde);
+    for (size_t i = 0; i < per_pt; i++) {
+      uint32_t* pte = pt + i;
+      if ((*pte & (PTE_P | PTE_U | PTE_COW)) != (PTE_P | PTE_U))
+        continue;
+      if ((*pte & PTE_ADDR) >= (uintptr_t)PHYS_BASE)
+        continue;
+      if (!page_from_pool(&user_pool, (void*)vtop(pte_get_page(*pte))))
+        continue;
+
+      candidates++;
+      if (random_ulong() % candidates == 0)
+        chosen = (uintptr_t)(pi * per_pt + i) * PGSIZE;
+    }
+  }
+
+  if (chosen == 0)
+    return;
+
+  candidate->upage = (uint32_t*)chosen;
+  candidate->rank = candidate->rank * 2 + 1;
+}
+
+
+
+static bool swap_random_user_page(void) {
+  struct swap_candidate candidate = {
+      NULL, NULL,
+      thread_current()->pcb != NULL ? thread_current()->pcb->pagedir : NULL,
+      NULL,
+      0,
+      3,
+  };
+  enum intr_level old_level = intr_disable();
+
+  /* thread_foreach() requires interrupts to be disabled.  Do the page-table
+     walk while the thread list is stable, then perform disk I/O after
+     restoring the previous interrupt level. */
+  thread_foreach(find_swap_candidate, &candidate);
+  if (candidate.owner != NULL)
+    thread_foreach(choose_swap_page, &candidate);
+  intr_set_level(old_level);
+
+  if (candidate.upage != NULL) {
+    if (0) printf("SWDBG req=%s victim=%s status=%d va=%x rank=%d\n", thread_name(),
+           candidate.owner != NULL ? candidate.owner->name : "?",
+           candidate.owner != NULL ? candidate.owner->status : -1,
+           candidate.upage, candidate.rank);
+    return do_swap_page(candidate.pd, candidate.upage);
+  }
+  return false;
 }
 #else
 static bool swap_random_user_page(void) { return false; }

@@ -101,18 +101,20 @@ static bool handle_cow(void* fault_addr) {
   ref_cnt_remove((void*)old_phys);
   return true;
 }
-static bool handle_swap(void* fault_addr){
+static bool handle_swap(void* fault_addr) {
+  if (0) printf("Page fault\n");
   uint32_t* pd = thread_current()->pcb->pagedir;
   void* upage = pg_round_down(fault_addr);
   if (!pagedir_is_swapped(pd, upage)) {
+    if (0) printf("Page not swapped %x\n",upage);
     return false;
   }
 
   free_swap_page(upage);
   return true;
 }
-    /* Handler for an exception (probably) caused by a user process. */
-    static void kill(struct intr_frame* f) {
+/* Handler for an exception (probably) caused by a user process. */
+static void kill(struct intr_frame* f) {
   /* This interrupt is one (probably) caused by a user process.
      For example, the process might have tried to access unmapped
      virtual memory (a page fault).  For now, we simply kill the
@@ -188,8 +190,10 @@ static void page_fault(struct intr_frame* f) {
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
-  if (not_present && is_user_vaddr(fault_addr) && handle_swap(fault_addr))
+  if (not_present && is_user_vaddr(fault_addr) && handle_swap(fault_addr)) {
+    if (0) printf("Page swap\n");
     return;
+  }
 
   //stack growth
   if (addr_in_stack(fault_addr) &&
@@ -204,7 +208,7 @@ static void page_fault(struct intr_frame* f) {
   }
 
   if (is_user_vaddr(fault_addr) && write && !not_present && handle_cow(fault_addr)) {
-   //  printf("Page fault\n");
+
     return;
   }
 
