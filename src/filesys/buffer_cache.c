@@ -7,7 +7,16 @@
    while the slot is only half filled: without the lock another thread can
    evict the slot we just claimed, or find it through check_exist() before the
    disk read has landed, and memcpy() the wrong sector into the caller's
-   buffer. */
+   buffer.
+
+   The lock covers only the cache metadata and the copy between buffer_region
+   and a private staging buffer -- kernel memory, which cannot fault.  The
+   caller's buffer is user memory: touching it can raise a page fault, and if
+   that fault kills the process (bad pointer, or a page that cannot be brought
+   back) the lock would never be released and every later file operation in the
+   kernel would block forever.  So the user bytes are moved in and out of the
+   staging buffer while the lock is not held.  Callers transfer at most one
+   sector per call (inode_read_at/inode_write_at copy sector by sector). */
 static struct lock buffer_lock;
 struct list buffer_records;
 struct bitmap* buffer_map;
@@ -111,15 +120,27 @@ static bool buffer_write_locked(struct block* blk, block_sector_t sector, void* 
   return true;
 }
 bool buffer_read(struct block* blk, block_sector_t sector, void* buffer, size_t size, int offset) {
+  uint8_t staging[BLOCK_SECTOR_SIZE];
+  ASSERT(offset + (int)size <= BLOCK_SECTOR_SIZE);
+
   lock_acquire(&buffer_lock);
-  bool ok = buffer_read_locked(blk, sector, buffer, size, offset);
+  bool ok = buffer_read_locked(blk, sector, staging, size, offset);
   lock_release(&buffer_lock);
+
+  /* TOUCHES USER MEMORY: must stay outside the lock. */
+  memcpy(buffer, staging, size);
   return ok;
 }
 
 bool buffer_write(struct block* blk, block_sector_t sector, void* buffer, size_t size, int offset) {
+  uint8_t staging[BLOCK_SECTOR_SIZE];
+  ASSERT(offset + (int)size <= BLOCK_SECTOR_SIZE);
+
+  /* TOUCHES USER MEMORY: must stay outside the lock. */
+  memcpy(staging, buffer, size);
+
   lock_acquire(&buffer_lock);
-  bool ok = buffer_write_locked(blk, sector, buffer, size, offset);
+  bool ok = buffer_write_locked(blk, sector, staging, size, offset);
   lock_release(&buffer_lock);
   return ok;
 }
