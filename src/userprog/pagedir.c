@@ -273,7 +273,10 @@ bool pagedir_is_swapped(uint32_t* pd, const void* vpage) {
   uint32_t* pte = lookup_page(pd, vpage, false);
   return pte != NULL && (*pte & PTE_SWAPPED) != 0;
 }
-
+bool pagedir_is_present(uint32_t* pd, const void* vpage) {
+  uint32_t* pte = lookup_page(pd, vpage, false);
+  return pte != NULL && (*pte & PTE_P) != 0;
+}
 uintptr_t pagedir_get_swap_slot(uint32_t* pd, const void* vpage) {
   uint32_t* pte = lookup_page(pd, vpage, false);
   return pte != NULL && (*pte & PTE_SWAPPED) ? (*pte & PTE_ADDR) >> PTSHIFT : 0;

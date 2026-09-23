@@ -7,6 +7,10 @@
 #include "filesys/free-map.h"
 #include "threads/malloc.h"
 #include "threads/synch.h"
+#include "threads/thread.h"
+#include "threads/palloc.h"
+#include "userprog/pagedir.h"
+#include "userprog/process.h"
 #include "filesys/buffer_cache.h"
 #include "stdio.h"
 /* Identifies an inode. */
@@ -43,6 +47,9 @@ struct inode {
   int deny_write_cnt;     /* 0: writes ok, >0: deny writes. */
   struct inode_disk data; /* Inode content. */
   struct lock lock;       /* Per-inode lock (protects deny_write_cnt, removed, data). */
+  bool mapped;
+  int mmaped_cnt;
+  uint32_t* kpage;
 };
 
 /* Returns the block device sector that contains byte offset POS
@@ -283,6 +290,8 @@ struct inode* inode_open(block_sector_t sector) {
   inode->open_cnt = 1;
   inode->deny_write_cnt = 0;
   inode->removed = false;
+  inode->mapped = false;
+  inode->mmaped_cnt = 0;
   lock_init(&inode->lock);
 
   buffer_read(fs_device, inode->sector, &inode->data, BLOCK_SECTOR_SIZE, 0);
@@ -342,6 +351,9 @@ void inode_close(struct inode* inode) {
       }
       free(node);
     }
+    if (inode->mapped) {
+      inode_write_at(inode, inode->kpage, inode->data.length, 0);
+    }
     buffer_write(fs_device, inode->sector, &inode->data, BLOCK_SECTOR_SIZE, 0);
     free(inode);
   }
@@ -363,7 +375,10 @@ off_t inode_read_at(struct inode* inode, void* buffer_, off_t size, off_t offset
   off_t bytes_read = 0;
 
   lock_acquire(&inode->lock);
-
+  if(inode->mapped&&inode->data.length>offset+size){
+    memcpy(buffer_, inode->kpage + offset, size);
+    return size;
+  }
   while (size > 0) {
     /* Disk sector to read, starting byte offset within sector. */
     block_sector_t sector_idx = byte_to_sector(inode, offset);
@@ -415,7 +430,8 @@ off_t inode_write_at(struct inode* inode, const void* buffer_, off_t size,
     return 0;
   }
 
-  if (inode->data.length < size + offset) { //need extend
+  if (inode->data.length < size + offset&&!inode->mapped) { //need extend
+    
     inode_extend(inode, size + offset);
   }
 
@@ -423,8 +439,9 @@ off_t inode_write_at(struct inode* inode, const void* buffer_, off_t size,
     /* Sector to write, starting byte offset within sector. */
     block_sector_t sector_idx = byte_to_sector(inode, offset);
     if (sector_idx == -1) {
-      lock_release(&inode->lock);
-      return 0;
+      // lock_release(&inode->lock);
+      // return 0;
+      break;
     }
     int sector_ofs = offset % BLOCK_SECTOR_SIZE;
 
@@ -479,7 +496,7 @@ off_t inode_length(const struct inode* inode) {
   return length;
 }
 
-bool inode_extend(struct inode* inode,size_t size){
+bool inode_extend(struct inode* inode, size_t size) {
   size_t old_sec_nodes = bytes_to_sector_nodes(inode->data.length);
   size_t old_data_nodes = bytes_to_sectors(inode->data.length);
   int new_second_nodes = bytes_to_sector_nodes(size);
@@ -537,3 +554,61 @@ bool inode_extend(struct inode* inode,size_t size){
 }
 
 block_sector_t get_inode_sector(struct inode* inode) { return inode->sector; }
+
+bool do_mmap(struct inode* inode, uint32_t* uaddr) { //should paddr align?
+  uint32_t* pd = thread_current()->pcb->pagedir;
+  if (!inode->mmaped_cnt && inode->data.length != 0) { //not in memory and not empty
+    uint32_t* page =
+        palloc_get_multiple(PAL_ASSERT, DIV_ROUND_UP(inode->data.length, 4096)); //virtual addr
+    if (page == NULL) {
+      return false;
+    }
+    inode->kpage = page;
+    inode_read_at(inode, inode->kpage, inode->data.length, 0);
+  }
+
+  for (int i = 0; i < DIV_ROUND_UP(inode->data.length, 4096); ++i) {
+    uint8_t* vpage = (uint8_t*)uaddr + i * 4096;
+    if (pagedir_is_present(pd, vpage)) { //out of range
+      for (int j = 0; j < i; ++j) {      //unmap
+        pagedir_unmap_temp_page(pd, (uint8_t*)uaddr + j * 4096);
+      }
+      return false;//free resources here
+    }
+
+    /* 连续页映射:第 i 个虚拟页对应 kpage 向后第 i 个物理页。 */
+    pagedir_set_page(pd, vpage, (uint8_t*)inode->kpage + i * 4096, true, false);
+  }
+  inode->mmaped_cnt++;
+  inode->mapped = true;
+  return true;
+}
+bool do_remmap(struct inode* inode) { inode->mmaped_cnt++; }
+bool do_unmmap(struct inode* inode, uint32_t* uaddr) {
+  uint32_t* pd = thread_current()->pcb->pagedir;
+  if(!inode->mapped){
+    return true;
+  }
+
+  for (int i = 0; i < DIV_ROUND_UP(inode->data.length, 4096); ++i) {
+    if (pagedir_is_dirty(pd, (uint8_t*)uaddr + i * 4096)) {
+      inode_write_at(inode, inode->kpage, inode->data.length, 0);
+      break;
+    }
+  }
+
+
+  for (int i = 0; i < DIV_ROUND_UP(inode->data.length, 4096); ++i) {
+     ASSERT(pagedir_is_present(pd, (uint8_t*)uaddr+i*4096))
+
+        pagedir_unmap_temp_page(pd, (uint8_t*)uaddr+i*4096);
+
+
+  }
+
+  inode->mmaped_cnt--;
+  if(inode->mmaped_cnt==0){
+    inode->mapped = false;
+    palloc_free_multiple(inode->kpage, DIV_ROUND_UP(inode->data.length, 4096),false);//if the inode was extended
+  }
+}

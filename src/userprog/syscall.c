@@ -397,8 +397,46 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     return;
   }
   if (args[0] == SYS_MMAP) {
+    validate(args, 2);
+    struct list_elem* file_node = list_find_file(&thread_current()->pcb->fd_list, args[1]);
+    if (!file_node || (uint32_t*)args[2]==NULL||pg_ofs((void*)args[2])!=0) {
+      f->eax = -1;
+      return;
+    }
+    struct file_descriptors* file = list_entry(file_node, struct file_descriptors, elem);
+    bool success=do_mmap(file->file_descriptor->inode, (uint32_t*)args[2]);
+    if(!success){
+      f->eax = MAP_FAILED;
+      return;
+    }
+    struct mmap_descripter* des = malloc(sizeof(struct mmap_descripter));
+    des->file_descriptor = file_reopen(file->file_descriptor);
+    des->mapp_addr = (uint32_t*)args[2];
+    des->id = thread_current()->pcb->next_mmapid;
+    thread_current()->pcb->next_mmapid++;
+    list_push_back(&thread_current()->pcb->mmap_list, &des->elem);
+    f->eax = des->id;
+    return;
   }
   if (args[0] == SYS_MUNMAP) {
+    validate(args, 1);
+
+    struct list_elem* head = list_begin(&thread_current()->pcb->mmap_list);
+    struct list_elem* tail = list_end(&thread_current()->pcb->mmap_list);
+    struct mmap_descripter* des;
+    while (head != tail) {
+      des = list_entry(head, struct mmap_descripter, elem);
+      if(des->id==args[1]){
+        break;
+      }
+      head = list_next(head);
+    }
+    do_unmmap(des->file_descriptor->inode, des->mapp_addr);
+    file_close(des->file_descriptor);
+
+    list_remove(&des->elem);
+    free(des);
+    return;
   }
   if (args[0] == SYS_SEMA_DOWN) {
     validate(args, 1);
@@ -722,8 +760,32 @@ int fork_(struct intr_frame* f) { //reopen files, copy pagedir and set to COW
   /* 与父进程一致,子进程也映射一份 LFB。 */
   map_lfb_user(pd_child);
 
+  /* 子进程页表虽已复制、能访问 mmap 区域,但不继承映射:
+     把父进程 mmap_list 里的区域从子进程页表中移除,
+     并归还复制页表时给这些页加的 COW 引用计数。 */
+  {
+    struct list_elem* mmap_head = list_begin(&thread_current()->pcb->mmap_list);
+    struct list_elem* mmap_tail = list_end(&thread_current()->pcb->mmap_list);
+    while (mmap_head != mmap_tail) {
+      struct mmap_descripter* des = list_entry(mmap_head, struct mmap_descripter, elem);
+      /* 步进与 do_mmap 一致:按字节连续页映射。 */
+      for (int i = 0; i < (inode_length(des->file_descriptor->inode) + PGSIZE - 1) / PGSIZE;
+           ++i) {
+        uint8_t* upage = (uint8_t*)des->mapp_addr + i * PGSIZE;
+        uintptr_t paddr = pagedir_get_physical_page(pd_child, upage);
+        if (paddr == 0) {
+          continue;
+        }
+        ref_cnt_remove((void*)paddr);
+        pagedir_clear_page(pd_child, upage);
+      }
+      mmap_head = list_next(mmap_head);
+    }
+  }
+
   list_init(&child_pcb->lock_list);
   list_init(&child_pcb->sema_list);
+  list_init(&child_pcb->mmap_list);
 
   sema_init(&bundle->fork_sema, 0);
   bundle->parent_pid = thread_current()->pcb->main_pid;

@@ -21,4 +21,7 @@ void inode_allow_write(struct inode*);
 off_t inode_length(const struct inode*);
 bool inode_extend(struct inode* inode, size_t size);
 block_sector_t get_inode_sector(struct inode* inode);
+bool do_mmap(struct inode* inode, uint32_t* paddr);
+bool do_unmmap(struct inode* inode, uint32_t* paddr);
+bool do_remmap(struct inode* inode);
 #endif /* filesys/inode.h */

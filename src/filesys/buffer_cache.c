@@ -145,7 +145,7 @@ bool buffer_write(struct block* blk, block_sector_t sector, void* buffer, size_t
   return ok;
 }
 
-bool write_back(struct block* blk, block_sector_t sector, void* buffer) {
+bool write_back(struct block* blk, block_sector_t sector, void* buffer) {//add lock if we use write threads
 
   block_write(blk, sector, buffer);
 

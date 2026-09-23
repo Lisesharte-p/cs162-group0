@@ -163,9 +163,11 @@ void start_process(void* file_name_) {
     new_pcb->next_fd = 2;
     new_pcb->next_sid = 0;
     new_pcb->next_lid = 0;
+    new_pcb->next_mmapid = 0;
     list_init(&new_pcb->fd_list);
     list_init(&new_pcb->sema_list);
     list_init(&new_pcb->lock_list);
+    list_init(&new_pcb->mmap_list);
     new_pcb->main_pid = TID_ERROR;
     new_pcb->exit_code = 0;
 
@@ -479,6 +481,27 @@ void process_exit(void) {
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   uint32_t* pd = cur->pcb->pagedir;
+
+//unmap here
+
+  /* do_unmmap 写回脏页时会做阻塞磁盘 IO(buffer cache miss → ide →
+     timer_nsleep),real_time_sleep 断言必须在开中断下运行。process_exit
+     可能从 INTR_OFF 的页错误路径进入,所以这里显式开中断。 */
+  intr_enable();
+
+  struct list_elem* head = list_begin(&thread_current()->pcb->mmap_list);
+  struct list_elem* tail = list_end(&thread_current()->pcb->mmap_list);
+  struct mmap_descripter* des;
+  while (head != tail) {
+    des = list_entry(head, struct mmap_descripter, elem);
+    do_unmmap(des->file_descriptor->inode, des->mapp_addr);
+
+    head = list_next(head);
+  }
+
+  /* 重新关中断:下面的 pagedir 销毁必须与 timer 中断互斥,
+     否则 timer 中断可能切回已被释放的进程页目录。 */
+  intr_disable();
 
   if (pd != NULL) {
     /* Correct ordering here is crucial.  We must set

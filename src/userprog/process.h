@@ -3,7 +3,10 @@
 
 #include "threads/thread.h"
 #include <stdint.h>
+// #include "lib/user/syscall.h"
 
+typedef int mapid_t;
+#define MAP_FAILED ((mapid_t) - 1)
 // At most 8MB can be allocated to the stack
 // These defines will be used in Project 2: Multithreading
 #define MAX_STACK_PAGES (1 << 11)
@@ -42,6 +45,7 @@ struct process {
   int next_fd;
   int next_sid;
   int next_lid;
+  int next_mmapid;
   struct semaphore sema_exit;
   tid_t parent_pid;
   int exit_code;
@@ -51,9 +55,14 @@ struct process {
   struct bitmap* thread_id_bitmap;
   block_sector_t cwd_sector;
 
-
+  struct list mmap_list;
 };
-
+struct mmap_descripter {
+  mapid_t id;
+  uint32_t* mapp_addr;
+  struct list_elem elem;
+  struct file* file_descriptor;
+};
 struct file_descriptors {
   struct list_elem elem;
   struct file* file_descriptor;
